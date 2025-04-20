@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import DashboardLayout from "./components/layout/DashboardLayout";
@@ -32,27 +32,25 @@ const App = () => {
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            
-            {/* Protected Dashboard Routes */}
-            <Route path="/dashboard" element={
-              <PrivateRoute>
-                <DashboardLayout />
-              </PrivateRoute>
-            }>
-              <Route index element={<Dashboard />} />
-              <Route path="history" element={<History />} />
-              <Route path="contacts" element={<Contacts />} />
-              <Route path="tracking" element={<Tracking />} />
-            </Route>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+          
+          {/* Protected Dashboard Routes */}
+          <Route path="/dashboard" element={
+            <PrivateRoute>
+              <DashboardLayout />
+            </PrivateRoute>
+          }>
+            <Route index element={<Dashboard />} />
+            <Route path="history" element={<History />} />
+            <Route path="contacts" element={<Contacts />} />
+            <Route path="tracking" element={<Tracking />} />
+          </Route>
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </TooltipProvider>
     </QueryClientProvider>
   );
