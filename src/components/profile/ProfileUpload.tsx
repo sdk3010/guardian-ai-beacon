@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Camera } from "lucide-react";
 import { users } from '@/lib/api';
+import { useToast } from "@/hooks/use-toast";
 
 interface ProfileUploadProps {
   currentImage?: string;
@@ -14,6 +15,7 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -22,12 +24,22 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     // Validate file type
     if (!file.type.startsWith('image/')) {
       setError('Please upload an image file');
+      toast({
+        variant: "destructive",
+        title: "Invalid file type",
+        description: "Please upload an image file",
+      });
       return;
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       setError('File size must be less than 5MB');
+      toast({
+        variant: "destructive",
+        title: "File too large",
+        description: "File size must be less than 5MB",
+      });
       return;
     }
 
@@ -37,8 +49,18 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     try {
       const response = await users.uploadProfilePic(file);
       onUploadSuccess(response.data.imageUrl);
+      toast({
+        title: "Success",
+        description: "Profile picture updated successfully",
+      });
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to upload image');
+      const errorMessage = err.response?.data?.message || 'Failed to upload image';
+      setError(errorMessage);
+      toast({
+        variant: "destructive",
+        title: "Upload failed",
+        description: errorMessage,
+      });
     } finally {
       setIsUploading(false);
     }
