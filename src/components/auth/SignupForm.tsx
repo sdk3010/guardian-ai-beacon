@@ -1,32 +1,101 @@
 
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
+import { useNavigate } from 'react-router-dom';
 import { auth } from '@/lib/api';
 import { useToast } from "@/hooks/use-toast";
-import { Eye, EyeOff, User, Mail, Lock } from "lucide-react";
+import { User, Mail, Lock } from "lucide-react";
 
-export default function SignupForm() {
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+const SignupForm = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    confirmPassword: '',
   });
-  const [validationErrors, setValidationErrors] = useState({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: '',
-  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState<{
+    name?: string;
+    email?: string;
+    password?: string;
+    general?: string;
+  }>({});
+
+  const { toast } = useToast();
+  const navigate = useNavigate();
+
+  const validateForm = () => {
+    const newErrors: typeof errors = {};
+
+    if (!formData.name.trim()) {
+      newErrors.name = 'Name is required';
+    }
+
+    if (!formData.email.trim()) {
+      newErrors.email = 'Email is required';
+    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+      newErrors.email = 'Email is invalid';
+    }
+
+    if (!formData.password) {
+      newErrors.password = 'Password is required';
+    } else if (formData.password.length < 6) {
+      newErrors.password = 'Password must be at least 6 characters';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!validateForm()) return;
+
+    setIsLoading(true);
+    setErrors({});
+
+    try {
+      const response = await auth.signup(
+        formData.name, 
+        formData.email, 
+        formData.password
+      );
+
+      toast({
+        title: "Signup Successful",
+        description: "Welcome to Guardian AI!",
+      });
+
+      // Store token in localStorage
+      localStorage.setItem('token', response.data.token);
+
+      // Redirect to dashboard
+      navigate('/dashboard');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Signup failed. Please try again.';
+      
+      // Specific error handling
+      if (errorMessage.includes('already registered')) {
+        setErrors({ 
+          general: 'This email is already registered. Try logging in instead.' 
+        });
+      } else {
+        setErrors({ 
+          general: errorMessage 
+        });
+      }
+
+      toast({
+        variant: "destructive",
+        title: "Signup Error",
+        description: errorMessage,
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -35,140 +104,51 @@ export default function SignupForm() {
       [name]: value
     }));
     
-    // Clear validation error when user types
-    if (validationErrors[name as keyof typeof validationErrors]) {
-      setValidationErrors(prev => ({
+    // Clear specific field error when user starts typing
+    if (errors[name as keyof typeof errors]) {
+      setErrors(prev => ({
         ...prev,
-        [name]: ''
+        [name]: undefined
       }));
     }
   };
 
-  const validateForm = () => {
-    const errors = {
-      name: '',
-      email: '',
-      password: '',
-      confirmPassword: '',
-    };
-    let isValid = true;
-
-    if (!formData.name.trim()) {
-      errors.name = 'Name is required';
-      isValid = false;
-    }
-
-    if (!formData.email.trim()) {
-      errors.email = 'Email is required';
-      isValid = false;
-    } else if (!/^\S+@\S+\.\S+$/.test(formData.email)) {
-      errors.email = 'Please enter a valid email';
-      isValid = false;
-    }
-
-    if (!formData.password) {
-      errors.password = 'Password is required';
-      isValid = false;
-    } else if (formData.password.length < 6) {
-      errors.password = 'Password must be at least 6 characters';
-      isValid = false;
-    }
-
-    if (formData.password !== formData.confirmPassword) {
-      errors.confirmPassword = 'Passwords do not match';
-      isValid = false;
-    }
-
-    setValidationErrors(errors);
-    return isValid;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    
-    if (!validateForm()) {
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const response = await auth.signup(
-        formData.name,
-        formData.email, 
-        formData.password
-      );
-      localStorage.setItem('token', response.data.token);
-      
-      // Store user data
-      if (response.data.user) {
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-      }
-      
-      toast({
-        title: "Account created!",
-        description: "Welcome to Guardian AI",
-      });
-      
-      navigate('/dashboard');
-    } catch (err: any) {
-      const errorMsg = err.response?.data?.message || 'An error occurred during signup';
-      setError(errorMsg);
-      
-      // Map backend errors to form fields
-      if (errorMsg.includes('email') && errorMsg.includes('exist')) {
-        setValidationErrors(prev => ({
-          ...prev,
-          email: 'Email is already registered'
-        }));
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
-    <div className="w-full max-w-md mx-auto space-y-6">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold">Create Account</h1>
-        <p className="text-muted-foreground mt-2">Sign up for Guardian AI</p>
-      </div>
-
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+    <div className="w-full max-w-md mx-auto p-6 bg-white dark:bg-gray-800 rounded-xl shadow-md">
+      <h2 className="text-2xl font-bold mb-6 text-center">Sign Up to Guardian AI</h2>
+      
+      {errors.general && (
+        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded mb-4">
+          {errors.general}
+        </div>
       )}
-
+      
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="name">Full Name</Label>
+        <div>
+          <Label htmlFor="name" className="block mb-2">Name</Label>
           <div className="relative">
-            <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
             <Input
-              id="name"
               type="text"
+              id="name"
               name="name"
-              placeholder="John Doe"
+              placeholder="Your full name"
               className="pl-10"
               value={formData.name}
               onChange={handleChange}
               disabled={isLoading}
             />
           </div>
-          {validationErrors.name && (
-            <p className="text-sm text-red-500 mt-1">{validationErrors.name}</p>
-          )}
+          {errors.name && <p className="text-red-500 text-sm mt-1">{errors.name}</p>}
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
+        <div>
+          <Label htmlFor="email" className="block mb-2">Email</Label>
           <div className="relative">
-            <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
             <Input
-              id="email"
               type="email"
+              id="email"
               name="email"
               placeholder="you@example.com"
               className="pl-10"
@@ -177,77 +157,49 @@ export default function SignupForm() {
               disabled={isLoading}
             />
           </div>
-          {validationErrors.email && (
-            <p className="text-sm text-red-500 mt-1">{validationErrors.email}</p>
-          )}
+          {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email}</p>}
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
+        <div>
+          <Label htmlFor="password" className="block mb-2">Password</Label>
           <div className="relative">
-            <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
             <Input
+              type="password"
               id="password"
-              type={showPassword ? "text" : "password"}
               name="password"
-              placeholder="••••••••"
+              placeholder="Create a strong password"
               className="pl-10"
               value={formData.password}
               onChange={handleChange}
               disabled={isLoading}
             />
-            <button 
-              type="button"
-              className="absolute right-3 top-3 text-muted-foreground"
-              onClick={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
           </div>
-          {validationErrors.password && (
-            <p className="text-sm text-red-500 mt-1">{validationErrors.password}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="confirmPassword">Confirm Password</Label>
-          <div className="relative">
-            <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              id="confirmPassword"
-              type={showPassword ? "text" : "password"}
-              name="confirmPassword"
-              placeholder="••••••••"
-              className="pl-10"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              disabled={isLoading}
-            />
-          </div>
-          {validationErrors.confirmPassword && (
-            <p className="text-sm text-red-500 mt-1">{validationErrors.confirmPassword}</p>
-          )}
+          {errors.password && <p className="text-red-500 text-sm mt-1">{errors.password}</p>}
         </div>
 
         <Button 
           type="submit" 
-          className="w-full"
+          className="w-full" 
           disabled={isLoading}
         >
-          {isLoading ? 'Creating account...' : 'Sign Up'}
+          {isLoading ? 'Signing Up...' : 'Create Account'}
         </Button>
+      </form>
 
-        <p className="text-center text-sm">
-          Already have an account?{' '}
-          <button
-            type="button"
-            onClick={() => navigate('/login')}
+      <div className="mt-4 text-center">
+        <p className="text-sm text-gray-600">
+          Already have an account? {' '}
+          <a 
+            href="/login" 
             className="text-primary hover:underline"
           >
-            Login
-          </button>
+            Log In
+          </a>
         </p>
-      </form>
+      </div>
     </div>
   );
-}
+};
+
+export default SignupForm;
