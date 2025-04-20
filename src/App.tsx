@@ -6,11 +6,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
+import ForgotPassword from "./pages/auth/ForgotPassword";
 import DashboardLayout from "./components/layout/DashboardLayout";
 import Dashboard from "./pages/dashboard/Dashboard";
 import History from "./pages/dashboard/History";
 import Contacts from "./pages/dashboard/Contacts";
 import Tracking from "./pages/dashboard/Tracking";
+import Chat from "./pages/dashboard/Chat";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -36,6 +38,7 @@ const App = () => {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           
           {/* Protected Dashboard Routes */}
           <Route path="/dashboard" element={
@@ -47,6 +50,7 @@ const App = () => {
             <Route path="history" element={<History />} />
             <Route path="contacts" element={<Contacts />} />
             <Route path="tracking" element={<Tracking />} />
+            <Route path="chat" element={<Chat />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { User, Shield, Clock, Phone, MapPin, LogOut, Menu, X } from "lucide-react";
+import { User, Shield, Clock, Phone, MapPin, LogOut, Menu, X, MessageSquare } from "lucide-react";
 import FloatingTrackButton from '@/components/tracking/FloatingTrackButton';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 
@@ -100,6 +100,16 @@ export default function DashboardLayout() {
                 Tracking
               </NavLink>
               <NavLink 
+                to="/dashboard/chat" 
+                className={({ isActive }) => 
+                  `flex items-center gap-3 px-4 py-2.5 rounded-md transition-colors 
+                  ${isActive ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`
+                }
+              >
+                <MessageSquare className="w-5 h-5" />
+                Chat Assistant
+              </NavLink>
+              <NavLink 
                 to="/dashboard/history" 
                 className={({ isActive }) => 
                   `flex items-center gap-3 px-4 py-2.5 rounded-md transition-colors 
@@ -175,6 +185,16 @@ export default function DashboardLayout() {
                 >
                   <MapPin className="w-5 h-5" />
                   Tracking
+                </NavLink>
+                <NavLink 
+                  to="/dashboard/chat" 
+                  className={({ isActive }) => 
+                    `flex items-center gap-3 px-4 py-3 rounded-md transition-colors text-lg
+                    ${isActive ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`
+                  }
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  Chat Assistant
                 </NavLink>
                 <NavLink 
                   to="/dashboard/history" 

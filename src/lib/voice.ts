@@ -74,8 +74,8 @@ class VoiceRecognition {
   }
 }
 
-// Text-to-Speech
-class VoiceSynthesis {
+// Text-to-Speech using Web Speech API
+class WebSpeechSynthesis {
   speak(text: string) {
     if ('speechSynthesis' in window) {
       // Cancel any ongoing speech
@@ -103,5 +103,58 @@ class VoiceSynthesis {
   }
 }
 
+// Text-to-Speech using ElevenLabs API
+class ElevenLabsSynthesis {
+  async speak(text: string, voiceId?: string) {
+    try {
+      if (!text) return;
+      
+      const response = await fetch('/api/text-to-speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          text,
+          voiceId: voiceId || 'EXAVITQu4vr4xnSDxMaL' // Default to Sarah voice
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to generate speech');
+      }
+      
+      const data = await response.json();
+      
+      // Play the audio
+      const audio = new Audio(data.audioUrl);
+      audio.play();
+      
+      return audio;
+    } catch (error) {
+      console.error('Error using ElevenLabs TTS:', error);
+      // Fallback to browser TTS
+      webSpeechSynthesis.speak(text);
+    }
+  }
+}
+
 export const voiceRecognition = new VoiceRecognition();
-export const voiceSynthesis = new VoiceSynthesis();
+export const webSpeechSynthesis = new WebSpeechSynthesis();
+export const elevenLabsSynthesis = new ElevenLabsSynthesis();
+
+// Combined voice synthesis with fallback
+export const voiceSynthesis = {
+  async speak(text: string, useElevenLabs: boolean = true, voiceId?: string) {
+    if (useElevenLabs) {
+      try {
+        return await elevenLabsSynthesis.speak(text, voiceId);
+      } catch (error) {
+        console.error('ElevenLabs failed, falling back to Web Speech API', error);
+        webSpeechSynthesis.speak(text);
+      }
+    } else {
+      webSpeechSynthesis.speak(text);
+    }
+  }
+};

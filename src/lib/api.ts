@@ -17,6 +17,10 @@ export const auth = {
     api.post('/auth/login', { email, password }),
   signup: (name: string, email: string, password: string) => 
     api.post('/auth/signup', { name, email, password }),
+  resetPassword: (email: string) =>
+    api.post('/auth/reset-password', { email }),
+  setNewPassword: (token: string, password: string) =>
+    api.post('/auth/set-new-password', { token, password }),
 };
 
 export const users = {
@@ -30,6 +34,7 @@ export const users = {
       },
     });
   },
+  updateProfile: (userData: any) => api.put('/users', userData),
 };
 
 export const alerts = {
@@ -53,3 +58,15 @@ export const tracking = {
   getSafePlaces: (location: { lat: number; lng: number }) => 
     api.get('/map/safe-places', { params: location }),
 };
+
+// New AI chatbot API
+export const ai = {
+  chat: (message: string, conversationId?: string) => 
+    api.post('/ai/chat', { message, conversationId }),
+  textToSpeech: (text: string, voiceId?: string) => 
+    api.post('/ai/text-to-speech', { text, voiceId }),
+  search: (query: string) => 
+    api.post('/ai/search', { query }),
+};
+
+export default api;
