@@ -3,13 +3,25 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Label } from "@/components/ui/label";
 import { auth } from '@/lib/api';
+import { useToast } from "@/hooks/use-toast";
+import { Eye, EyeOff, User, Mail, Lock } from "lucide-react";
 
 export default function SignupForm() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+  });
+  const [validationErrors, setValidationErrors] = useState({
     name: '',
     email: '',
     password: '',
@@ -17,21 +29,69 @@ export default function SignupForm() {
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [name]: value
     }));
+    
+    // Clear validation error when user types
+    if (validationErrors[name as keyof typeof validationErrors]) {
+      setValidationErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
+    }
+  };
+
+  const validateForm = () => {
+    const errors = {
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+    };
+    let isValid = true;
+
+    if (!formData.name.trim()) {
+      errors.name = 'Name is required';
+      isValid = false;
+    }
+
+    if (!formData.email.trim()) {
+      errors.email = 'Email is required';
+      isValid = false;
+    } else if (!/^\S+@\S+\.\S+$/.test(formData.email)) {
+      errors.email = 'Please enter a valid email';
+      isValid = false;
+    }
+
+    if (!formData.password) {
+      errors.password = 'Password is required';
+      isValid = false;
+    } else if (formData.password.length < 6) {
+      errors.password = 'Password must be at least 6 characters';
+      isValid = false;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      errors.confirmPassword = 'Passwords do not match';
+      isValid = false;
+    }
+
+    setValidationErrors(errors);
+    return isValid;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
+    setError('');
+    
+    if (!validateForm()) {
       return;
     }
 
     setIsLoading(true);
-    setError('');
 
     try {
       const response = await auth.signup(
@@ -40,9 +100,29 @@ export default function SignupForm() {
         formData.password
       );
       localStorage.setItem('token', response.data.token);
+      
+      // Store user data
+      if (response.data.user) {
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+      }
+      
+      toast({
+        title: "Account created!",
+        description: "Welcome to Guardian AI",
+      });
+      
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'An error occurred');
+      const errorMsg = err.response?.data?.message || 'An error occurred during signup';
+      setError(errorMsg);
+      
+      // Map backend errors to form fields
+      if (errorMsg.includes('email') && errorMsg.includes('exist')) {
+        setValidationErrors(prev => ({
+          ...prev,
+          email: 'Email is already registered'
+        }));
+      }
     } finally {
       setIsLoading(false);
     }
@@ -55,54 +135,99 @@ export default function SignupForm() {
         <p className="text-muted-foreground mt-2">Sign up for Guardian AI</p>
       </div>
 
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
-          <Input
-            type="text"
-            name="name"
-            placeholder="Full Name"
-            value={formData.name}
-            onChange={handleChange}
-            required
-          />
+          <Label htmlFor="name">Full Name</Label>
+          <div className="relative">
+            <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id="name"
+              type="text"
+              name="name"
+              placeholder="John Doe"
+              className="pl-10"
+              value={formData.name}
+              onChange={handleChange}
+              disabled={isLoading}
+            />
+          </div>
+          {validationErrors.name && (
+            <p className="text-sm text-red-500 mt-1">{validationErrors.name}</p>
+          )}
         </div>
 
         <div className="space-y-2">
-          <Input
-            type="email"
-            name="email"
-            placeholder="Email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-          />
+          <Label htmlFor="email">Email</Label>
+          <div className="relative">
+            <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id="email"
+              type="email"
+              name="email"
+              placeholder="you@example.com"
+              className="pl-10"
+              value={formData.email}
+              onChange={handleChange}
+              disabled={isLoading}
+            />
+          </div>
+          {validationErrors.email && (
+            <p className="text-sm text-red-500 mt-1">{validationErrors.email}</p>
+          )}
         </div>
 
         <div className="space-y-2">
-          <Input
-            type="password"
-            name="password"
-            placeholder="Password"
-            value={formData.password}
-            onChange={handleChange}
-            required
-          />
+          <Label htmlFor="password">Password</Label>
+          <div className="relative">
+            <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              name="password"
+              placeholder="••••••••"
+              className="pl-10"
+              value={formData.password}
+              onChange={handleChange}
+              disabled={isLoading}
+            />
+            <button 
+              type="button"
+              className="absolute right-3 top-3 text-muted-foreground"
+              onClick={() => setShowPassword(!showPassword)}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {validationErrors.password && (
+            <p className="text-sm text-red-500 mt-1">{validationErrors.password}</p>
+          )}
         </div>
 
         <div className="space-y-2">
-          <Input
-            type="password"
-            name="confirmPassword"
-            placeholder="Confirm Password"
-            value={formData.confirmPassword}
-            onChange={handleChange}
-            required
-          />
+          <Label htmlFor="confirmPassword">Confirm Password</Label>
+          <div className="relative">
+            <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id="confirmPassword"
+              type={showPassword ? "text" : "password"}
+              name="confirmPassword"
+              placeholder="••••••••"
+              className="pl-10"
+              value={formData.confirmPassword}
+              onChange={handleChange}
+              disabled={isLoading}
+            />
+          </div>
+          {validationErrors.confirmPassword && (
+            <p className="text-sm text-red-500 mt-1">{validationErrors.confirmPassword}</p>
+          )}
         </div>
-
-        {error && (
-          <div className="text-red-500 text-sm">{error}</div>
-        )}
 
         <Button 
           type="submit" 

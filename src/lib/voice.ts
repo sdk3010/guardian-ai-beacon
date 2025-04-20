@@ -5,11 +5,20 @@ interface IWindow extends Window {
 }
 
 type VoiceCallback = (text: string) => void;
+type TriggerCallback = (phrase: string) => void;
+
+// List of trigger phrases
+export const TRIGGER_PHRASES = [
+  'someone is following me',
+  'am i safe here',
+  'help me',
+  'get me out of here',
+  'i\'m scared'
+];
 
 class VoiceRecognition {
   recognition: any = null;
   isListening: boolean = false;
-  triggerPhrase: string = "help me";
 
   constructor() {
     const windowWithSpeech = window as IWindow;
@@ -21,7 +30,7 @@ class VoiceRecognition {
     }
   }
 
-  start(onResult: VoiceCallback, onTriggerPhrase?: () => void) {
+  start(onResult: VoiceCallback, onTriggerPhrase?: TriggerCallback) {
     if (!this.recognition) {
       console.error('Speech recognition not supported');
       return;
@@ -34,10 +43,22 @@ class VoiceRecognition {
         const transcript = event.results[i][0].transcript.toLowerCase();
         onResult(transcript);
 
-        // Check for trigger phrase
-        if (onTriggerPhrase && transcript.includes(this.triggerPhrase)) {
-          onTriggerPhrase();
+        // Check for trigger phrases
+        if (onTriggerPhrase) {
+          for (const phrase of TRIGGER_PHRASES) {
+            if (transcript.includes(phrase)) {
+              onTriggerPhrase(phrase);
+              break;
+            }
+          }
         }
+      }
+    };
+
+    this.recognition.onerror = (event: any) => {
+      console.error('Speech recognition error', event.error);
+      if (event.error === 'not-allowed') {
+        console.error('Microphone access denied');
       }
     };
 
@@ -57,7 +78,24 @@ class VoiceRecognition {
 class VoiceSynthesis {
   speak(text: string) {
     if ('speechSynthesis' in window) {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+      
       const utterance = new SpeechSynthesisUtterance(text);
+      
+      // Try to use a more natural female voice if available
+      const voices = window.speechSynthesis.getVoices();
+      const femaleVoice = voices.find(voice => 
+        voice.name.includes('female') || voice.name.includes('Samantha')
+      );
+      
+      if (femaleVoice) {
+        utterance.voice = femaleVoice;
+      }
+      
+      utterance.rate = 1.0;  // Normal speed
+      utterance.pitch = 1.0; // Normal pitch
+      
       window.speechSynthesis.speak(utterance);
     } else {
       console.error('Speech synthesis not supported');

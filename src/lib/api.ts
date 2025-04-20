@@ -35,14 +35,16 @@ export const users = {
 export const alerts = {
   getAll: () => api.get('/alerts'),
   create: (alertData: any) => api.post('/alerts', alertData),
-  triggerEmergency: (location: { lat: number; lng: number }) => 
-    api.post('/trigger-alert', { location }),
+  delete: (alertId: string) => api.delete(`/alerts/${alertId}`),
+  triggerEmergency: (location: { lat: number; lng: number }, message?: string) => 
+    api.post('/trigger-alert', { location, message }),
 };
 
 export const contacts = {
   getAll: () => api.get('/contacts'),
-  add: (contact: { name: string; phone: string; email: string }) => 
+  add: (contact: { name: string; phone: string; email: string; relationship?: string }) => 
     api.post('/contacts', contact),
+  delete: (contactId: string) => api.delete(`/contacts/${contactId}`),
 };
 
 export const tracking = {
