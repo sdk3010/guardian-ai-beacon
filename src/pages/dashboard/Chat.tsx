@@ -1,11 +1,10 @@
-
 import { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AlertTriangle, LoaderCircle, Mic, MicOff, Robot, Send, User } from "lucide-react";
+import { AlertTriangle, LoaderCircle, Mic, MicOff, Bot, Send, User } from "lucide-react";
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from "@/hooks/use-toast";
@@ -35,7 +34,6 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   
-  // Add welcome message on first load
   useEffect(() => {
     const welcomeMessage = {
       id: 'welcome',
@@ -46,12 +44,10 @@ export default function Chat() {
     setMessages([welcomeMessage]);
   }, [user]);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Load chat history from Supabase when user is authenticated
   useEffect(() => {
     if (user) {
       loadChatHistory();
@@ -72,7 +68,6 @@ export default function Chat() {
       if (error) throw error;
       
       if (data && data.length > 0) {
-        // Transform database messages to local format
         const historyMessages = data.map(msg => ({
           id: msg.id,
           content: msg.message,
@@ -80,12 +75,10 @@ export default function Chat() {
           timestamp: new Date(msg.created_at)
         }));
         
-        // Replace welcome message with history
         setMessages(historyMessages);
       }
     } catch (err) {
       console.error('Failed to load chat history:', err);
-      // Don't show error here, just use the welcome message
     }
   };
 
@@ -102,7 +95,6 @@ export default function Chat() {
         });
     } catch (err) {
       console.error('Failed to save chat message:', err);
-      // We don't need to show this error to the user
     }
   };
 
@@ -115,7 +107,6 @@ export default function Chat() {
     
     if (!inputMessage.trim() || isLoading) return;
     
-    // Add user message to UI immediately
     const userMessage: Message = {
       id: Date.now().toString(),
       content: inputMessage,
@@ -125,16 +116,12 @@ export default function Chat() {
     
     setMessages(prev => [...prev, userMessage]);
     
-    // Save to Supabase
     await saveChatMessage(inputMessage, true);
     
-    // Clear input
     setInputMessage('');
     
-    // Focus input field
     inputRef.current?.focus();
     
-    // Add a loading message
     const loadingId = Date.now() + 1000;
     const loadingMessage: Message = {
       id: loadingId.toString(),
@@ -149,7 +136,6 @@ export default function Chat() {
     setHasChatError(false);
     
     try {
-      // Call the AI chat function
       const response = await fetch("https://loouyfusnadcgfltcxyt.functions.supabase.co/ai-chat", {
         method: "POST",
         headers: {
@@ -167,12 +153,10 @@ export default function Chat() {
       
       const data = await response.json();
       
-      // Update conversation ID for future messages
       if (data.conversationId) {
         setConversationId(data.conversationId);
       }
       
-      // Replace loading message with actual response
       setMessages(prev => 
         prev.map(msg => 
           msg.id === loadingId.toString()
@@ -187,16 +171,13 @@ export default function Chat() {
         )
       );
       
-      // Save AI response to Supabase
       await saveChatMessage(data.message.content, false);
       
-      // Optional: read response aloud
       voiceSynthesis.speak(data.message.content);
       
     } catch (error: any) {
       console.error('Chat error:', error);
       
-      // Replace loading message with error message
       setMessages(prev => 
         prev.map(msg => 
           msg.id === loadingId.toString()
@@ -239,7 +220,6 @@ export default function Chat() {
     }
   };
 
-  // Fallback UI when the chat encounters errors
   if (hasChatError && messages.length <= 2) {
     return (
       <div className="p-4 md:p-6 max-w-4xl mx-auto">
@@ -296,7 +276,7 @@ export default function Chat() {
         <Card className="flex-1 flex flex-col">
           <CardHeader className="pb-4 border-b">
             <CardTitle className="flex items-center">
-              <Robot className="mr-2 h-5 w-5 text-primary" />
+              <Bot className="mr-2 h-5 w-5 text-primary" />
               Guardian AI Assistant
             </CardTitle>
           </CardHeader>
@@ -316,7 +296,7 @@ export default function Chat() {
                           </AvatarFallback>
                         ) : (
                           <AvatarFallback>
-                            <Robot className="h-5 w-5" />
+                            <Bot className="h-5 w-5" />
                           </AvatarFallback>
                         )}
                         <AvatarImage src={message.isUser ? user?.user_metadata?.avatar_url : undefined} />
@@ -341,7 +321,6 @@ export default function Chat() {
                           <>
                             <div className="whitespace-pre-wrap">{message.content}</div>
                             
-                            {/* Show search results if available */}
                             {message.searchData && (
                               <div className="mt-2 pt-2 border-t border-border text-xs text-muted-foreground">
                                 <p className="font-medium">Based on search results</p>

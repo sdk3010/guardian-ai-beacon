@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
@@ -24,7 +23,6 @@ export default function DashboardLayout() {
     }
   }, []);
 
-  // Close mobile menu when route changes
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [location.pathname]);
@@ -37,7 +35,6 @@ export default function DashboardLayout() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Mobile Header */}
       <header className="md:hidden flex items-center justify-between p-4 border-b">
         <div className="flex items-center">
           <Shield className="h-6 w-6 text-primary mr-2" />
@@ -56,7 +53,6 @@ export default function DashboardLayout() {
       </header>
 
       <div className="flex flex-1">
-        {/* Sidebar - Desktop */}
         <aside className="hidden md:flex md:w-64 flex-col border-r bg-card">
           <div className="p-6">
             <div className="flex items-center gap-3 mb-6">
@@ -145,7 +141,6 @@ export default function DashboardLayout() {
           </div>
         </aside>
 
-        {/* Mobile Menu */}
         {isMobileMenuOpen && (
           <div className="md:hidden fixed inset-0 z-50 bg-background">
             <div className="flex flex-col h-full pt-16 p-6">
@@ -232,11 +227,9 @@ export default function DashboardLayout() {
           </div>
         )}
 
-        {/* Main Content */}
         <main className="flex-1 overflow-auto">
           <Outlet />
           
-          {/* Only show floating action button on desktop and when not on tracking page */}
           {location.pathname !== '/dashboard/tracking' && (
             <div className="hidden md:block">
               <FloatingTrackButton />
