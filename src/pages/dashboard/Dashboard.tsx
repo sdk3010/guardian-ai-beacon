@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +9,7 @@ import { MapPin, Clock, Phone, Shield, ArrowRight, AlertTriangle } from "lucide-
 import EmergencyButton from '@/components/safety/EmergencyButton';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 interface UserInfo {
   id: string;
@@ -22,7 +24,8 @@ interface UserInfo {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, session } = useAuth();
+  const { toast } = useToast();
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -30,6 +33,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (user) {
       loadUserInfo();
+    } else {
+      setIsLoading(false);
     }
   }, [user]);
 
@@ -45,21 +50,44 @@ export default function Dashboard() {
         .select('id, status')
         .eq('user_id', user.id);
       
-      if (alertsError) throw alertsError;
+      if (alertsError) {
+        console.error('Error fetching alerts:', alertsError);
+        toast({
+          variant: "destructive",
+          title: "Error loading alerts",
+          description: alertsError.message || "Could not load your alerts"
+        });
+      }
       
       const activeAlerts = alertsData?.filter(alert => alert.status === 'active').length || 0;
       const totalAlerts = alertsData?.length || 0;
       
-      // Instead of upserting to the users table, just get any existing user profile data
+      // Get user profile data - using maybeSingle to avoid errors if user doesn't exist yet
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
       
       if (userError) {
-        // Handle the case where user doesn't exist in the users table
-        console.log('User not found in users table, using auth data');
+        console.error('Error fetching user data:', userError);
+        toast({
+          variant: "destructive",
+          title: "Error loading profile",
+          description: userError.message || "Could not load your profile data"
+        });
+      }
+      
+      // If user data doesn't exist in the public.users table yet, update last login
+      if (userData) {
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ last_login: new Date().toISOString() })
+          .eq('id', user.id);
+        
+        if (updateError) {
+          console.error('Error updating last login:', updateError);
+        }
       }
       
       // Set formatted user info

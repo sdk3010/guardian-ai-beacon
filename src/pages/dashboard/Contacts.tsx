@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,8 @@ export default function Contacts() {
   useEffect(() => {
     if (user) {
       loadContacts();
+    } else {
+      setIsLoading(false);
     }
   }, [user]);
 
@@ -64,6 +67,11 @@ export default function Contacts() {
     } catch (err: any) {
       console.error('Error loading contacts:', err);
       setError(err.message || 'Failed to load contacts');
+      toast({
+        variant: "destructive",
+        title: "Error loading contacts",
+        description: err.message || "Could not load your emergency contacts"
+      });
     } finally {
       setIsLoading(false);
     }
@@ -107,6 +115,11 @@ export default function Contacts() {
     
     if (!user) {
       setError('You must be logged in to add contacts');
+      toast({
+        variant: "destructive",
+        title: "Authentication Required",
+        description: "You must be logged in to add contacts"
+      });
       return;
     }
     
@@ -139,7 +152,10 @@ export default function Contacts() {
         })
         .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase error adding contact:', error);
+        throw error;
+      }
       
       toast({
         title: "Contact Added",

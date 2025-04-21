@@ -462,7 +462,6 @@ export type Database = {
           id: string
           last_login: string | null
           name: string
-          password: string
           phone: string | null
           profile_image_url: string | null
           role: string | null
@@ -474,7 +473,6 @@ export type Database = {
           id: string
           last_login?: string | null
           name: string
-          password: string
           phone?: string | null
           profile_image_url?: string | null
           role?: string | null
@@ -486,7 +484,6 @@ export type Database = {
           id?: string
           last_login?: string | null
           name?: string
-          password?: string
           phone?: string | null
           profile_image_url?: string | null
           role?: string | null
