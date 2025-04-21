@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,20 +128,6 @@ export default function Contacts() {
     setError('');
 
     try {
-      // Create a profiles record for the user if it doesn't exist
-      const { error: profileError } = await supabase
-        .from('users')
-        .upsert({ 
-          id: user.id,
-          email: user.email,
-          name: user.user_metadata?.name || 'User'
-        });
-      
-      if (profileError) {
-        console.error('Error ensuring user profile exists:', profileError);
-      }
-      
-      // Now insert the contact
       const { data, error } = await supabase
         .from('emergency_contacts')
         .insert({

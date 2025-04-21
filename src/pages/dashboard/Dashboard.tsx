@@ -50,19 +50,17 @@ export default function Dashboard() {
       const activeAlerts = alertsData?.filter(alert => alert.status === 'active').length || 0;
       const totalAlerts = alertsData?.length || 0;
       
-      // Get user profile data (or create if doesn't exist)
+      // Instead of upserting to the users table, just get any existing user profile data
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .upsert({ 
-          id: user.id,
-          email: user.email,
-          name: user.user_metadata?.name || 'User',
-          last_login: new Date().toISOString()
-        })
         .select('*')
+        .eq('id', user.id)
         .single();
       
-      if (userError) throw userError;
+      if (userError) {
+        // Handle the case where user doesn't exist in the users table
+        console.log('User not found in users table, using auth data');
+      }
       
       // Set formatted user info
       setUserInfo({
@@ -72,7 +70,7 @@ export default function Dashboard() {
         profilePic: userData?.profile_image_url,
         activeAlerts,
         totalAlerts,
-        lastLogin: userData?.last_login,
+        lastLogin: userData?.last_login || new Date().toISOString(),
         phone: userData?.phone
       });
     } catch (err: any) {
