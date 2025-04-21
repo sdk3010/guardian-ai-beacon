@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useNavigate } from 'react-router-dom';
-import { auth } from '@/lib/api';
 import { useToast } from "@/hooks/use-toast";
 import { User, Mail, Lock } from "lucide-react";
+import { useAuth } from '@/context/AuthContext';
 
 const SignupForm = () => {
   const [formData, setFormData] = useState({
@@ -14,7 +14,7 @@ const SignupForm = () => {
     email: '',
     password: '',
   });
-  const [isLoading, setIsLoading] = useState(false);
+  
   const [errors, setErrors] = useState<{
     name?: string;
     email?: string;
@@ -24,6 +24,7 @@ const SignupForm = () => {
 
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { signUp, isLoading } = useAuth();
 
   const validateForm = () => {
     const newErrors: typeof errors = {};
@@ -53,47 +54,18 @@ const SignupForm = () => {
     
     if (!validateForm()) return;
 
-    setIsLoading(true);
     setErrors({});
 
     try {
-      const response = await auth.signup(
-        formData.name, 
-        formData.email, 
-        formData.password
-      );
-
-      toast({
-        title: "Signup Successful",
-        description: "Welcome to Guardian AI!",
-      });
-
-      // Store token in localStorage
-      localStorage.setItem('token', response.data.token);
-
-      // Redirect to dashboard
-      navigate('/dashboard');
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Signup failed. Please try again.';
+      await signUp(formData.email, formData.password, formData.name);
+      // The user will need to verify their email before they can log in
+      // The toast notification is already handled in the signUp function
       
-      // Specific error handling
-      if (errorMessage.includes('already registered')) {
-        setErrors({ 
-          general: 'This email is already registered. Try logging in instead.' 
-        });
-      } else {
-        setErrors({ 
-          general: errorMessage 
-        });
-      }
-
-      toast({
-        variant: "destructive",
-        title: "Signup Error",
-        description: errorMessage,
-      });
-    } finally {
-      setIsLoading(false);
+      // Redirect to login page
+      navigate('/login');
+    } catch (error: any) {
+      // Error handling is already done in the signUp function
+      console.error('Error in form submission:', error);
     }
   };
 

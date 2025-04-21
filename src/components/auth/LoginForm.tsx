@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
-import { auth } from '@/lib/api';
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { useAuth } from '@/context/AuthContext';
 
 export default function LoginForm() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
+  const { signIn, isLoading } = useAuth();
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -29,38 +29,20 @@ export default function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     setError('');
 
+    if (!formData.email || !formData.password) {
+      setError('Please enter both email and password');
+      return;
+    }
+
     try {
-      const response = await auth.login(formData.email, formData.password);
-      localStorage.setItem('token', response.data.token);
-      
-      // Store user data
-      if (response.data.user) {
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-      }
-      
-      toast({
-        title: "Welcome back!",
-        description: "You've successfully logged in.",
-      });
-      
+      await signIn(formData.email, formData.password);
+      // Toast is already handled in the signIn function
       navigate('/dashboard');
     } catch (err: any) {
-      const statusCode = err.response?.status;
-      let errorMessage = err.response?.data?.message || 'An error occurred during login';
-      
-      // Provide more user-friendly error messages
-      if (statusCode === 401) {
-        errorMessage = 'Invalid email or password';
-      } else if (statusCode === 404) {
-        errorMessage = 'Account not found. Please sign up.';
-      }
-      
-      setError(errorMessage);
-    } finally {
-      setIsLoading(false);
+      // Most error handling is done in the signIn function, but we'll set the local error state too
+      setError(err.message || 'Failed to sign in');
     }
   };
 
