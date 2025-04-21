@@ -17,7 +17,14 @@ import Tracking from "./pages/dashboard/Tracking";
 import Chat from "./pages/dashboard/Chat";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 // Auth guard component
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
@@ -50,11 +57,14 @@ const App = () => {
             <Route path="/reset-password" element={<ResetPassword />} />
             
             {/* Protected Dashboard Routes */}
-            <Route path="/dashboard" element={
-              <PrivateRoute>
-                <DashboardLayout />
-              </PrivateRoute>
-            }>
+            <Route 
+              path="/dashboard" 
+              element={
+                <PrivateRoute>
+                  <DashboardLayout />
+                </PrivateRoute>
+              }
+            >
               <Route index element={<Dashboard />} />
               <Route path="history" element={<History />} />
               <Route path="contacts" element={<Contacts />} />

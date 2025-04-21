@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -5,7 +6,8 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Mic, MicOff, MapPin, CheckCircle, AlertTriangle } from "lucide-react";
-import { tracking, alerts } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/context/AuthContext';
 import { voiceRecognition, voiceSynthesis, TRIGGER_PHRASES } from '@/lib/voice';
 import { loadGoogleMapsScript, initMap } from '@/lib/maps';
 import { useToast } from "@/hooks/use-toast";
@@ -23,6 +25,7 @@ interface SafePlace {
 }
 
 export default function Tracking() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [isTracking, setIsTracking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -34,8 +37,10 @@ export default function Tracking() {
   const [userInput, setUserInput] = useState('');
   const [safetyScore, setSafetyScore] = useState(85);
   const [textInput, setTextInput] = useState('');
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const watchId = useRef<number | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const locationRetries = useRef(0);
 
   // Safety assessment based on various factors
   const getSafetyStatus = () => {
@@ -43,6 +48,18 @@ export default function Tracking() {
     if (safetyScore >= 60) return { status: 'moderate', message: "Exercise normal caution" };
     return { status: 'unsafe', message: "Be careful, stay alert" };
   };
+
+  useEffect(() => {
+    // Always attempt to load the map library on component mount
+    loadGoogleMapsScript().catch(err => {
+      console.error("Failed to load Google Maps:", err);
+      setError("Failed to load map service. Please check your internet connection.");
+    });
+    
+    return () => {
+      stopTracking();
+    };
+  }, []);
 
   useEffect(() => {
     if (isTracking) {
@@ -60,21 +77,51 @@ export default function Tracking() {
     if (currentLocation && isTracking) {
       renderMap();
       fetchSafePlaces();
+      
+      // Save location to Supabase
+      if (user) {
+        saveLocationToDatabase(currentLocation);
+      }
     }
-  }, [currentLocation, safePlaces]);
+  }, [currentLocation, user]);
+
+  const saveLocationToDatabase = async (location: { lat: number; lng: number }) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase
+        .from('location_logs')
+        .insert({
+          user_id: user.id,
+          latitude: location.lat,
+          longitude: location.lng,
+          accuracy: 10, // Mock value for now
+          timestamp: new Date().toISOString()
+        });
+        
+      if (error) {
+        console.error("Error saving location:", error);
+      }
+    } catch (err) {
+      console.error("Failed to save location:", err);
+    }
+  };
 
   const renderMap = async () => {
     try {
+      if (!mapContainerRef.current || !currentLocation) return;
+      
       await initMap(mapContainerRef, currentLocation, safePlaces);
     } catch (err) {
       console.error("Error rendering map:", err);
-      setError("Failed to load map. Please try again.");
+      setError("Failed to display map. Please try again.");
     }
   };
 
   const startTracking = () => {
     setUserInput('');
     setError('');
+    setPermissionDenied(false);
 
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
@@ -84,18 +131,37 @@ export default function Tracking() {
     // Start voice recognition if available
     startVoiceRecognition();
 
-    // Start location tracking
-    watchId.current = navigator.geolocation.watchPosition(
-      handlePositionUpdate,
-      handlePositionError,
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+    // First get the current position
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        // Initial position update
+        handlePositionUpdate(position);
+        
+        // Then start watching position
+        watchId.current = navigator.geolocation.watchPosition(
+          handlePositionUpdate,
+          handlePositionError,
+          { 
+            enableHighAccuracy: true, 
+            maximumAge: 10000, 
+            timeout: 10000 
+          }
+        );
+        
+        locationRetries.current = 0;
+        voiceSynthesis.speak("Tracking started. I'll keep you safe.");
+        toast({
+          title: "Tracking Started",
+          description: "Your location is now being tracked for safety",
+        });
+      },
+      (error) => {
+        handlePositionError(error);
+        // If we fail to get the initial position, don't start watching
+        setIsTracking(false);
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
-
-    voiceSynthesis.speak("Tracking started. I'll keep you safe.");
-    toast({
-      title: "Tracking Started",
-      description: "Your location is now being tracked for safety",
-    });
   };
 
   const stopTracking = () => {
@@ -121,36 +187,149 @@ export default function Tracking() {
   };
 
   const handlePositionUpdate = async (position: GeolocationPosition) => {
+    console.log("Got position update:", position.coords);
     const location = {
       lat: position.coords.latitude,
       lng: position.coords.longitude,
     };
     
     setCurrentLocation(location);
+    locationRetries.current = 0;
 
     try {
-      // Send location update to backend
-      await tracking.start(location);
+      // Send location update to backend - fallback to Supabase if API fails
+      try {
+        const response = await fetch("https://guardianai-backend.sdk3010.repl.co/track", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": "ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=="
+          },
+          body: JSON.stringify({ location })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+      } catch (err) {
+        console.error("Backend API error, using Supabase fallback:", err);
+        if (user) {
+          saveLocationToDatabase(location);
+        }
+      }
     } catch (err) {
       console.error("Error updating location:", err);
     }
   };
 
   const handlePositionError = (err: GeolocationPositionError) => {
-    setError(`Error getting location: ${err.message}`);
-    toast({
-      variant: "destructive",
-      title: "Location Error",
-      description: `Could not access your location: ${err.message}`,
-    });
+    console.error("Geolocation error:", err);
+    
+    locationRetries.current += 1;
+    
+    if (err.code === 1) { // PERMISSION_DENIED
+      setError("Location access denied. Please enable location services for this website.");
+      setPermissionDenied(true);
+      setIsTracking(false);
+      toast({
+        variant: "destructive",
+        title: "Location Permission Denied",
+        description: "Please enable location access in your browser settings to use tracking features.",
+      });
+    } else if (err.code === 2) { // POSITION_UNAVAILABLE
+      setError("Could not determine your location. Please check your device's GPS.");
+      if (locationRetries.current < 3) {
+        toast({
+          variant: "destructive",
+          title: "Location Unavailable",
+          description: "Trying again... Please ensure you have a clear GPS signal.",
+        });
+      } else {
+        setIsTracking(false);
+        toast({
+          variant: "destructive",
+          title: "Location Unavailable",
+          description: "Could not determine your location after multiple attempts.",
+        });
+      }
+    } else if (err.code === 3) { // TIMEOUT
+      setError("Location request timed out. Please try again.");
+      if (locationRetries.current < 3) {
+        toast({
+          variant: "destructive",
+          title: "Location Timeout",
+          description: "Trying again... This may happen in areas with poor GPS signal.",
+        });
+      } else {
+        setIsTracking(false);
+        toast({
+          variant: "destructive",
+          title: "Location Timeout",
+          description: "Location requests are timing out repeatedly. Please try again later.",
+        });
+      }
+    }
   };
 
   const fetchSafePlaces = async () => {
     if (!currentLocation) return;
 
+    setSafePlaces([]);
+    
     try {
-      const response = await tracking.getSafePlaces(currentLocation);
-      setSafePlaces(response.data);
+      // Try the backend API first
+      try {
+        const response = await fetch(
+          `https://guardianai-backend.sdk3010.repl.co/map/safe-places?lat=${currentLocation.lat}&lng=${currentLocation.lng}`,
+          {
+            headers: {
+              "x-api-key": "ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=="
+            }
+          }
+        );
+        
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        setSafePlaces(data);
+      } catch (err) {
+        console.error("Backend API error:", err);
+        
+        // Fallback to mock data
+        const mockSafePlaces: SafePlace[] = [
+          {
+            id: "place1",
+            name: "City Police Station",
+            type: "Police",
+            distance: 0.7,
+            address: "123 Safety St",
+            lat: currentLocation.lat + 0.002,
+            lng: currentLocation.lng + 0.002
+          },
+          {
+            id: "place2",
+            name: "Downtown Hospital",
+            type: "Hospital",
+            distance: 1.2,
+            address: "456 Health Ave",
+            lat: currentLocation.lat - 0.003,
+            lng: currentLocation.lng + 0.001
+          },
+          {
+            id: "place3",
+            name: "24/7 Pharmacy",
+            type: "Pharmacy",
+            distance: 0.5,
+            address: "789 Medicine Rd",
+            lat: currentLocation.lat + 0.001,
+            lng: currentLocation.lng - 0.002
+          }
+        ];
+        
+        setSafePlaces(mockSafePlaces);
+      }
     } catch (err) {
       console.error("Error fetching safe places:", err);
     }
@@ -214,13 +393,52 @@ export default function Tracking() {
   };
 
   const handleEmergencyPhrase = async (phrase: string) => {
+    if (!user) {
+      speak("You need to be logged in to send emergency alerts.");
+      return;
+    }
+    
     setIsProcessing(true);
     
     speak(`I heard you say "${phrase}". Sending emergency alert now.`);
     
     if (currentLocation) {
       try {
-        await alerts.triggerEmergency(currentLocation, `Emergency triggered by voice: "${phrase}"`);
+        // Try the backend API first
+        try {
+          const response = await fetch("https://guardianai-backend.sdk3010.repl.co/trigger-alert", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": "ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=="
+            },
+            body: JSON.stringify({
+              location: currentLocation,
+              message: `Emergency triggered by voice: "${phrase}"`
+            })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+          }
+        } catch (err) {
+          console.error("Backend API error, using Supabase fallback:", err);
+          
+          // Fallback to Supabase
+          const { error } = await supabase
+            .from('alerts')
+            .insert({
+              user_id: user.id,
+              type: 'voice',
+              latitude: currentLocation.lat,
+              longitude: currentLocation.lng,
+              message: `Emergency triggered by voice: "${phrase}"`,
+              status: 'active'
+            });
+            
+          if (error) throw error;
+        }
+        
         speak("Emergency alert sent to your contacts");
         toast({
           variant: "destructive",
@@ -282,6 +500,22 @@ export default function Tracking() {
 
   const { status: safetyStatus, message: safetyMessage } = getSafetyStatus();
 
+  if (!user) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="py-10 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
+            <p className="text-muted-foreground">
+              You need to be logged in to use tracking features.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 md:p-6">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -295,6 +529,7 @@ export default function Tracking() {
               variant={isTracking ? "destructive" : "default"}
               onClick={() => setIsTracking(!isTracking)}
               className="shadow-md"
+              disabled={permissionDenied}
             >
               {isTracking ? "Stop Tracking" : "Start Tracking"}
             </Button>
@@ -465,13 +700,23 @@ export default function Tracking() {
               <p className="text-muted-foreground max-w-md mx-auto">
                 Enable location tracking to get safety alerts, find nearby safe places, and use voice commands for help.
               </p>
-              <Button 
-                onClick={() => setIsTracking(true)}
-                size="lg"
-                className="mt-2"
-              >
-                Start Tracking
-              </Button>
+              {permissionDenied ? (
+                <Alert variant="destructive" className="max-w-md mx-auto mt-4">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>Location Access Required</AlertTitle>
+                  <AlertDescription>
+                    Please enable location access in your browser settings to use tracking features.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Button 
+                  onClick={() => setIsTracking(true)}
+                  size="lg"
+                  className="mt-2"
+                >
+                  Start Tracking
+                </Button>
+              )}
             </div>
           </Card>
         )}

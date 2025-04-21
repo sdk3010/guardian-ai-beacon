@@ -3,288 +3,400 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Mic, MicOff, Send, User, Bot, VolumeX, Volume2 } from "lucide-react";
-import { ai } from '@/lib/api';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { AlertTriangle, LoaderCircle, Mic, MicOff, Robot, Send, User } from "lucide-react";
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from "@/hooks/use-toast";
 import { voiceRecognition, voiceSynthesis } from '@/lib/voice';
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ErrorBoundary } from '@/components/error/ErrorBoundary';
 
 interface Message {
   id: string;
   content: string;
-  sender: 'user' | 'bot';
+  isUser: boolean;
   timestamp: Date;
-  isSearchResult?: boolean;
+  isLoading?: boolean;
+  error?: boolean;
   searchData?: any;
 }
 
 export default function Chat() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [isListening, setIsListening] = useState(false);
+  const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isSpeechEnabled, setIsSpeechEnabled] = useState(true);
-  const [conversationId, setConversationId] = useState<string | undefined>();
+  const [isListening, setIsListening] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [hasChatError, setHasChatError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Add welcome message when component mounts
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Add welcome message on first load
   useEffect(() => {
-    if (messages.length === 0) {
-      setMessages([
-        {
-          id: 'welcome',
-          content: "Hello! I'm your Guardian AI assistant. How can I help you today?",
-          sender: 'bot',
-          timestamp: new Date(),
-        },
-      ]);
-    }
-  }, []);
+    const welcomeMessage = {
+      id: 'welcome',
+      content: `Hey${user ? ', ' + user.user_metadata?.name : ''}! I'm your Guardian AI assistant. How can I help you today?`,
+      isUser: false,
+      timestamp: new Date()
+    };
+    setMessages([welcomeMessage]);
+  }, [user]);
 
-  // Scroll to bottom of messages
+  // Scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = async () => {
-    if (!inputText.trim() && !isListening) return;
+  // Load chat history from Supabase when user is authenticated
+  useEffect(() => {
+    if (user) {
+      loadChatHistory();
+    }
+  }, [user]);
+
+  const loadChatHistory = async () => {
+    if (!user) return;
     
-    // Use the inputText if available, otherwise use the transcript from voice recognition
-    const messageText = inputText.trim();
-    setInputText('');
+    try {
+      const { data, error } = await supabase
+        .from('chat_history')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true })
+        .limit(50);
+        
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        // Transform database messages to local format
+        const historyMessages = data.map(msg => ({
+          id: msg.id,
+          content: msg.message,
+          isUser: msg.is_user,
+          timestamp: new Date(msg.created_at)
+        }));
+        
+        // Replace welcome message with history
+        setMessages(historyMessages);
+      }
+    } catch (err) {
+      console.error('Failed to load chat history:', err);
+      // Don't show error here, just use the welcome message
+    }
+  };
+
+  const saveChatMessage = async (message: string, isUser: boolean) => {
+    if (!user) return;
     
-    // Add user message to state
+    try {
+      await supabase
+        .from('chat_history')
+        .insert({
+          user_id: user.id,
+          message: message,
+          is_user: isUser
+        });
+    } catch (err) {
+      console.error('Failed to save chat message:', err);
+      // We don't need to show this error to the user
+    }
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    
+    if (!inputMessage.trim() || isLoading) return;
+    
+    // Add user message to UI immediately
     const userMessage: Message = {
       id: Date.now().toString(),
-      content: messageText,
-      sender: 'user',
-      timestamp: new Date(),
+      content: inputMessage,
+      isUser: true,
+      timestamp: new Date()
     };
     
     setMessages(prev => [...prev, userMessage]);
+    
+    // Save to Supabase
+    await saveChatMessage(inputMessage, true);
+    
+    // Clear input
+    setInputMessage('');
+    
+    // Focus input field
+    inputRef.current?.focus();
+    
+    // Add a loading message
+    const loadingId = Date.now() + 1000;
+    const loadingMessage: Message = {
+      id: loadingId.toString(),
+      content: '',
+      isUser: false,
+      timestamp: new Date(),
+      isLoading: true
+    };
+    
+    setMessages(prev => [...prev, loadingMessage]);
     setIsLoading(true);
+    setHasChatError(false);
     
     try {
-      // Call the AI service
-      const response = await ai.chat(messageText, conversationId);
-      const { message, conversationId: newConversationId } = response.data;
-      
-      // Save the conversation ID for future messages
-      if (newConversationId) {
-        setConversationId(newConversationId);
-      }
-      
-      // Add AI response to state
-      const botMessage: Message = {
-        id: Date.now().toString() + '-bot',
-        content: message.content,
-        sender: 'bot',
-        timestamp: new Date(),
-        isSearchResult: message.isSearchResult,
-        searchData: message.searchData,
-      };
-      
-      setMessages(prev => [...prev, botMessage]);
-      
-      // Speak the response if speech is enabled
-      if (isSpeechEnabled) {
-        setIsSpeaking(true);
-        await voiceSynthesis.speak(message.content, true);
-        setIsSpeaking(false);
-      }
-    } catch (err: any) {
-      console.error('Error sending message:', err);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Failed to send message. Please try again.",
+      // Call the AI chat function
+      const response = await fetch("https://loouyfusnadcgfltcxyt.functions.supabase.co/ai-chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: inputMessage,
+          conversationId
+        })
       });
       
-      // Add error message
-      setMessages(prev => [
-        ...prev, 
-        {
-          id: Date.now().toString() + '-error',
-          content: "I'm sorry, I couldn't process your request. Please try again.",
-          sender: 'bot',
-          timestamp: new Date(),
-        }
-      ]);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Update conversation ID for future messages
+      if (data.conversationId) {
+        setConversationId(data.conversationId);
+      }
+      
+      // Replace loading message with actual response
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === loadingId.toString()
+            ? {
+                id: loadingId.toString(),
+                content: data.message.content,
+                isUser: false,
+                timestamp: new Date(),
+                searchData: data.message.searchData
+              }
+            : msg
+        )
+      );
+      
+      // Save AI response to Supabase
+      await saveChatMessage(data.message.content, false);
+      
+      // Optional: read response aloud
+      voiceSynthesis.speak(data.message.content);
+      
+    } catch (error: any) {
+      console.error('Chat error:', error);
+      
+      // Replace loading message with error message
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === loadingId.toString()
+            ? {
+                id: loadingId.toString(),
+                content: "I'm sorry, I couldn't process your request. Please try again.",
+                isUser: false,
+                timestamp: new Date(),
+                error: true
+              }
+            : msg
+        )
+      );
+      
+      toast({
+        variant: "destructive",
+        title: "Chat Error",
+        description: error.message || "Failed to get a response",
+      });
+      
+      setHasChatError(true);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const toggleListening = () => {
+  const toggleVoiceInput = () => {
     if (isListening) {
       voiceRecognition.stop();
       setIsListening(false);
     } else {
-      voiceRecognition.start(
-        (text) => {
-          setInputText(text);
-        }
-      );
+      voiceRecognition.start((text) => {
+        setInputMessage(text);
+      });
       setIsListening(true);
       toast({
-        title: "Listening",
-        description: "Say something or type your message",
+        title: "Voice Input Active",
+        description: "Speak clearly into your microphone",
       });
     }
   };
 
-  const toggleSpeech = () => {
-    setIsSpeechEnabled(!isSpeechEnabled);
-    toast({
-      title: isSpeechEnabled ? "Voice disabled" : "Voice enabled",
-      description: isSpeechEnabled 
-        ? "AI responses will not be spoken aloud" 
-        : "AI responses will be spoken aloud",
-    });
-  };
+  // Fallback UI when the chat encounters errors
+  if (hasChatError && messages.length <= 2) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-col items-center justify-center py-10 text-center space-y-4">
+              <AlertTriangle className="h-12 w-12 text-destructive" />
+              <h2 className="text-xl font-semibold">Chat Assistant Unavailable</h2>
+              <p className="text-muted-foreground max-w-md">
+                We're having trouble connecting to our AI assistant. This could be due to network issues or service unavailability.
+              </p>
+              <Button 
+                onClick={() => window.location.reload()}
+                className="mt-4"
+              >
+                Retry
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-  const formatTimestamp = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
-  };
+  if (!user) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="py-10 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
+            <p className="text-muted-foreground">
+              You need to be logged in to use the chat assistant.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <Card className="h-[calc(100vh-8rem)]">
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center">
-              <Bot className="mr-2 h-5 w-5 text-primary" />
-              Chat Assistant
-            </div>
-            <div className="flex gap-2">
-              <Button 
-                variant="outline" 
-                size="icon"
-                onClick={toggleSpeech}
-              >
-                {isSpeechEnabled ? (
-                  <Volume2 className={`h-4 w-4 ${isSpeaking ? 'text-primary animate-pulse' : ''}`} />
-                ) : (
-                  <VolumeX className="h-4 w-4" />
-                )}
-              </Button>
-              <Button 
-                variant="outline" 
-                size="icon"
-                onClick={toggleListening}
-                className={isListening ? 'bg-primary/10' : ''}
-              >
-                {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </Button>
-            </div>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col h-full">
-          <div className="flex-1 overflow-y-auto mb-4 space-y-4">
-            {messages.map((message) => (
-              <div 
-                key={message.id}
-                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className={`flex max-w-[80%] ${message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                  <Avatar className={`h-8 w-8 ${message.sender === 'user' ? 'ml-2' : 'mr-2'}`}>
-                    {message.sender === 'user' ? (
-                      <>
-                        <AvatarImage src={localStorage.getItem('userProfilePic') || undefined} />
-                        <AvatarFallback><User className="h-4 w-4" /></AvatarFallback>
-                      </>
-                    ) : (
-                      <>
-                        <AvatarImage src="/guardian-ai-logo.png" />
-                        <AvatarFallback><Bot className="h-4 w-4" /></AvatarFallback>
-                      </>
-                    )}
-                  </Avatar>
-                  <div>
-                    <div 
-                      className={`rounded-lg p-3 ${
-                        message.sender === 'user' 
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted'
-                      }`}
-                    >
-                      {message.isSearchResult && (
-                        <Badge variant="outline" className="mb-2">Search Result</Badge>
-                      )}
-                      {message.content}
-                    </div>
-                    <div 
-                      className={`text-xs text-muted-foreground mt-1 ${
-                        message.sender === 'user' ? 'text-right' : 'text-left'
-                      }`}
-                    >
-                      {formatTimestamp(message.timestamp)}
+    <ErrorBoundary fallback={
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Chat Error</AlertTitle>
+          <AlertDescription>
+            Something went wrong with the chat assistant. Please try refreshing the page.
+          </AlertDescription>
+        </Alert>
+      </div>
+    }>
+      <div className="p-4 md:p-6 max-w-4xl mx-auto h-[calc(100vh-64px)] flex flex-col">
+        <Card className="flex-1 flex flex-col">
+          <CardHeader className="pb-4 border-b">
+            <CardTitle className="flex items-center">
+              <Robot className="mr-2 h-5 w-5 text-primary" />
+              Guardian AI Assistant
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 flex flex-col p-0">
+            <ScrollArea className="flex-1 p-4">
+              <div className="space-y-4">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div className={`flex items-start gap-3 max-w-[80%] ${message.isUser ? 'flex-row-reverse' : ''}`}>
+                      <Avatar className={message.isUser ? 'bg-primary' : 'bg-secondary'}>
+                        {message.isUser ? (
+                          <AvatarFallback>
+                            <User className="h-5 w-5" />
+                          </AvatarFallback>
+                        ) : (
+                          <AvatarFallback>
+                            <Robot className="h-5 w-5" />
+                          </AvatarFallback>
+                        )}
+                        <AvatarImage src={message.isUser ? user?.user_metadata?.avatar_url : undefined} />
+                      </Avatar>
+                      <div 
+                        className={`
+                          rounded-lg p-3 
+                          ${message.isUser 
+                            ? 'bg-primary text-primary-foreground' 
+                            : message.error 
+                              ? 'bg-destructive/10 border border-destructive/20' 
+                              : 'bg-accent'
+                          }
+                        `}
+                      >
+                        {message.isLoading ? (
+                          <div className="flex items-center space-x-2">
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                            <span>Thinking...</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="whitespace-pre-wrap">{message.content}</div>
+                            
+                            {/* Show search results if available */}
+                            {message.searchData && (
+                              <div className="mt-2 pt-2 border-t border-border text-xs text-muted-foreground">
+                                <p className="font-medium">Based on search results</p>
+                              </div>
+                            )}
+                            
+                            <div className="mt-1 text-xs opacity-70">
+                              {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                ))}
+                <div ref={messagesEndRef} />
               </div>
-            ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="flex">
-                  <Avatar className="h-8 w-8 mr-2">
-                    <AvatarImage src="/guardian-ai-logo.png" />
-                    <AvatarFallback><Bot className="h-4 w-4" /></AvatarFallback>
-                  </Avatar>
-                  <div className="rounded-lg bg-muted p-3 flex items-center space-x-2">
-                    <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                  </div>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-          
-          <div className="border-t pt-4">
-            <form 
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendMessage();
-              }} 
-              className="flex items-center space-x-2"
-            >
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={toggleListening}
-                className={isListening ? 'bg-primary/10' : ''}
-              >
-                {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </Button>
-              
-              <Input
-                placeholder={isListening ? "Listening..." : "Type a message..."}
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                className="flex-1"
-                disabled={isLoading}
-              />
-              
-              <Button
-                type="submit"
-                size="icon"
-                disabled={isLoading || (!inputText.trim() && !isListening)}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+            </ScrollArea>
+            
+            <div className="p-4 border-t">
+              <form onSubmit={handleSendMessage} className="flex space-x-2">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={toggleVoiceInput}
+                  className={isListening ? 'bg-primary/10' : ''}
+                >
+                  {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                </Button>
+                <Input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Type your message..."
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  disabled={isLoading}
+                  className="flex-1"
+                />
+                <Button 
+                  type="submit" 
+                  size="icon" 
+                  disabled={!inputMessage.trim() || isLoading}
+                >
+                  {isLoading ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </Button>
+              </form>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </ErrorBoundary>
   );
 }

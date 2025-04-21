@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
-import { contacts } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from '@/context/AuthContext';
 import { Phone, Mail, User, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -16,10 +17,12 @@ interface Contact {
   phone: string;
   email: string;
   relationship?: string;
+  user_id?: string;
 }
 
 export default function Contacts() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [contactsList, setContactsList] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAddingContact, setIsAddingContact] = useState(false);
@@ -38,16 +41,29 @@ export default function Contacts() {
   });
 
   useEffect(() => {
-    loadContacts();
-  }, []);
+    if (user) {
+      loadContacts();
+    }
+  }, [user]);
 
   const loadContacts = async () => {
+    if (!user) return;
+    
     setError('');
     try {
-      const response = await contacts.getAll();
-      setContactsList(response.data);
+      const { data, error } = await supabase
+        .from('emergency_contacts')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      console.log('Loaded contacts:', data);
+      setContactsList(data || []);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to load contacts');
+      console.error('Error loading contacts:', err);
+      setError(err.message || 'Failed to load contacts');
     } finally {
       setIsLoading(false);
     }
@@ -89,6 +105,11 @@ export default function Contacts() {
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    if (!user) {
+      setError('You must be logged in to add contacts');
+      return;
+    }
+    
     if (!validateForm()) {
       return;
     }
@@ -107,19 +128,34 @@ export default function Contacts() {
     setError('');
 
     try {
-      await contacts.add(newContact);
-      await loadContacts(); // Refresh the list
-      setNewContact({ name: '', phone: '', email: '', relationship: '' }); // Reset form
+      // Insert the contact directly to Supabase
+      const { data, error } = await supabase
+        .from('emergency_contacts')
+        .insert({
+          name: newContact.name,
+          phone: newContact.phone,
+          email: newContact.email,
+          relationship: newContact.relationship || null,
+          user_id: user.id
+        })
+        .select();
+
+      if (error) throw error;
+      
       toast({
         title: "Contact Added",
         description: "Emergency contact has been added successfully",
       });
+      
+      await loadContacts(); // Refresh the list
+      setNewContact({ name: '', phone: '', email: '', relationship: '' }); // Reset form
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to add contact');
+      console.error('Error adding contact:', err);
+      setError(err.message || 'Failed to add contact');
       toast({
         variant: "destructive",
         title: "Failed to Add Contact",
-        description: err.response?.data?.message || 'An error occurred',
+        description: err.message || 'An error occurred',
       });
     } finally {
       setIsAddingContact(false);
@@ -127,22 +163,32 @@ export default function Contacts() {
   };
 
   const handleDeleteContact = async (id: string) => {
+    if (!user) return;
+    
     setIsDeletingContact(id);
     setError('');
 
     try {
-      await contacts.delete(id);
+      const { error } = await supabase
+        .from('emergency_contacts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      
       await loadContacts(); // Refresh the list
       toast({
         title: "Contact Deleted",
         description: "Emergency contact has been removed",
       });
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to delete contact');
+      console.error('Error deleting contact:', err);
+      setError(err.message || 'Failed to delete contact');
       toast({
         variant: "destructive",
         title: "Failed to Delete Contact",
-        description: err.response?.data?.message || 'An error occurred',
+        description: err.message || 'An error occurred',
       });
     } finally {
       setIsDeletingContact(null);
@@ -165,6 +211,22 @@ export default function Contacts() {
   const handleRelationshipChange = (value: string) => {
     setNewContact(prev => ({ ...prev, relationship: value }));
   };
+
+  if (!user) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="py-10 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
+            <p className="text-muted-foreground">
+              You need to be logged in to manage your emergency contacts.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">

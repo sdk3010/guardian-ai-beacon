@@ -19,6 +19,11 @@ export const TRIGGER_PHRASES = [
 class VoiceRecognition {
   recognition: any = null;
   isListening: boolean = false;
+  confidenceThreshold: number = 0.6; // Only accept results with this confidence or higher
+  minWordCount: number = 3; // Only respond to phrases with at least this many words
+  inactivityTimeout: number | null = null;
+  lastResultTime: number = 0;
+  inactivityTimeoutMs: number = 5000; // Stop listening after 5 seconds of inactivity
 
   constructor() {
     const windowWithSpeech = window as IWindow;
@@ -27,6 +32,9 @@ class VoiceRecognition {
       this.recognition = new SpeechRecognition();
       this.recognition.continuous = true;
       this.recognition.interimResults = true;
+      
+      // Initialize with reasonable defaults for noise reduction
+      this.recognition.lang = 'en-US'; // Set language explicitly
     }
   }
 
@@ -39,20 +47,42 @@ class VoiceRecognition {
     if (this.isListening) return;
 
     this.recognition.onresult = (event: any) => {
+      this.lastResultTime = Date.now();
+      
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript.toLowerCase();
+        const transcript = event.results[i][0].transcript.toLowerCase().trim();
+        const confidence = event.results[i][0].confidence;
+        
+        // Apply filters to reduce false positives
+        if (confidence < this.confidenceThreshold) {
+          console.log(`Ignored low confidence result (${confidence.toFixed(2)}): ${transcript}`);
+          continue;
+        }
+        
+        const wordCount = transcript.split(/\s+/).length;
+        if (wordCount < this.minWordCount) {
+          console.log(`Ignored short phrase (${wordCount} words): ${transcript}`);
+          continue;
+        }
+        
+        console.log(`Voice recognized: "${transcript}" (confidence: ${confidence.toFixed(2)})`);
         onResult(transcript);
 
-        // Check for trigger phrases
+        // Check for trigger phrases with additional validation
         if (onTriggerPhrase) {
           for (const phrase of TRIGGER_PHRASES) {
-            if (transcript.includes(phrase)) {
+            // More strict matching to reduce false positives
+            if (transcript.includes(phrase) && confidence > 0.75) {
+              console.log(`Trigger phrase detected: "${phrase}"`);
               onTriggerPhrase(phrase);
               break;
             }
           }
         }
       }
+      
+      // Reset inactivity timeout
+      this.resetInactivityTimeout();
     };
 
     this.recognition.onerror = (event: any) => {
@@ -64,13 +94,46 @@ class VoiceRecognition {
 
     this.recognition.start();
     this.isListening = true;
+    this.lastResultTime = Date.now();
+    this.resetInactivityTimeout();
+    
+    console.log('Voice recognition started');
   }
 
   stop() {
     if (!this.recognition || !this.isListening) return;
 
+    if (this.inactivityTimeout) {
+      clearTimeout(this.inactivityTimeout);
+      this.inactivityTimeout = null;
+    }
+    
     this.recognition.stop();
     this.isListening = false;
+    console.log('Voice recognition stopped');
+  }
+  
+  resetInactivityTimeout() {
+    if (this.inactivityTimeout) {
+      clearTimeout(this.inactivityTimeout);
+    }
+    
+    this.inactivityTimeout = window.setTimeout(() => {
+      const timeSinceLastResult = Date.now() - this.lastResultTime;
+      if (timeSinceLastResult >= this.inactivityTimeoutMs) {
+        console.log('Voice recognition stopped due to inactivity');
+        this.stop();
+      }
+    }, this.inactivityTimeoutMs);
+  }
+  
+  // Allow adjustment of sensitivity
+  setConfidenceThreshold(threshold: number) {
+    this.confidenceThreshold = Math.max(0, Math.min(1, threshold));
+  }
+  
+  setMinWordCount(count: number) {
+    this.minWordCount = Math.max(1, count);
   }
 }
 
