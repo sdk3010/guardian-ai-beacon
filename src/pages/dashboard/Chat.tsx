@@ -20,6 +20,8 @@ interface Message {
   isLoading?: boolean;
   error?: boolean;
   searchData?: any;
+  distressDetected?: boolean;
+  distressLevel?: number;
 }
 
 export default function Chat() {
@@ -35,6 +37,10 @@ export default function Chat() {
   const inputRef = useRef<HTMLInputElement>(null);
   
   useEffect(() => {
+    if (user) {
+      ensureUserExists().then(() => loadChatHistory());
+    }
+    
     const welcomeMessage = {
       id: 'welcome',
       content: `Hey${user ? ', ' + user.user_metadata?.name : ''}! I'm your Guardian AI assistant. How can I help you today?`,
@@ -48,11 +54,37 @@ export default function Chat() {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    if (user) {
-      loadChatHistory();
+  const ensureUserExists = async () => {
+    if (!user) return;
+    
+    try {
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      if (fetchError || !userData) {
+        console.log('User record not found in chat, creating...');
+        
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: user.id,
+            email: user.email || '',
+            name: user.user_metadata?.name || 'User',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+        
+        if (insertError) {
+          console.error('Error creating user record:', insertError);
+        }
+      }
+    } catch (err) {
+      console.error('Error ensuring user exists:', err);
     }
-  }, [user]);
+  };
 
   const loadChatHistory = async () => {
     if (!user) return;
@@ -72,29 +104,44 @@ export default function Chat() {
           id: msg.id,
           content: msg.message,
           isUser: msg.is_user,
+          distressDetected: msg.distress_detected,
+          distressLevel: msg.distress_level,
           timestamp: new Date(msg.created_at)
         }));
         
-        setMessages(historyMessages);
+        setMessages(prev => {
+          const welcomeMsg = prev.find(m => m.id === 'welcome');
+          return welcomeMsg ? [welcomeMsg, ...historyMessages] : historyMessages;
+        });
       }
     } catch (err) {
       console.error('Failed to load chat history:', err);
     }
   };
 
-  const saveChatMessage = async (message: string, isUser: boolean) => {
+  const saveChatMessage = async (message: string, isUser: boolean, distressDetected = false, distressLevel = 0) => {
     if (!user) return;
     
     try {
-      await supabase
+      const { data, error } = await supabase
         .from('chat_history')
         .insert({
           user_id: user.id,
           message: message,
-          is_user: isUser
-        });
+          is_user: isUser,
+          distress_detected: distressDetected,
+          distress_level: distressLevel
+        })
+        .select();
+        
+      if (error) {
+        console.error('Failed to save chat message:', error);
+      }
+      
+      return data?.[0]?.id;
     } catch (err) {
       console.error('Failed to save chat message:', err);
+      return null;
     }
   };
 
@@ -107,19 +154,17 @@ export default function Chat() {
     
     if (!inputMessage.trim() || isLoading) return;
     
+    const tempId = Date.now().toString();
+    
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: tempId,
       content: inputMessage,
       isUser: true,
       timestamp: new Date()
     };
     
     setMessages(prev => [...prev, userMessage]);
-    
-    await saveChatMessage(inputMessage, true);
-    
     setInputMessage('');
-    
     inputRef.current?.focus();
     
     const loadingId = Date.now() + 1000;
@@ -135,45 +180,79 @@ export default function Chat() {
     setIsLoading(true);
     setHasChatError(false);
     
+    const savedId = await saveChatMessage(inputMessage, true);
+    if (savedId) {
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === tempId
+            ? { ...msg, id: savedId }
+            : msg
+        )
+      );
+    }
+    
     try {
-      const response = await fetch("https://loouyfusnadcgfltcxyt.functions.supabase.co/ai-chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          message: inputMessage,
-          conversationId
-        })
-      });
+      let aiResponse: any;
+      let distressDetected = false;
+      let distressLevel = 0;
       
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+      try {
+        const response = await fetch("https://loouyfusnadcgfltcxyt.functions.supabase.co/ai-chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message: inputMessage,
+            conversationId,
+            userId: user?.id
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        aiResponse = data.message.content;
+        distressDetected = data.message.distressDetected || false;
+        distressLevel = data.message.distressLevel || 0;
+        
+        if (data.conversationId) {
+          setConversationId(data.conversationId);
+        }
+      } catch (apiError) {
+        console.error('AI chat API error, using fallback:', apiError);
+        
+        const distressKeywords = ['help', 'emergency', 'afraid', 'scared', 'danger', 'unsafe', 'hurt'];
+        const hasDistressWord = distressKeywords.some(word => inputMessage.toLowerCase().includes(word));
+        
+        aiResponse = hasDistressWord 
+          ? "I understand you might be in distress. Can I help you find nearby emergency services or contact someone for you?"
+          : "I'm here to help ensure your safety. Is there anything specific you need assistance with today?";
+          
+        distressDetected = hasDistressWord;
+        distressLevel = hasDistressWord ? 0.7 : 0;
       }
       
-      const data = await response.json();
-      
-      if (data.conversationId) {
-        setConversationId(data.conversationId);
-      }
+      const aiMsgId = await saveChatMessage(aiResponse, false, distressDetected, distressLevel);
       
       setMessages(prev => 
         prev.map(msg => 
           msg.id === loadingId.toString()
             ? {
-                id: loadingId.toString(),
-                content: data.message.content,
+                id: aiMsgId || loadingId.toString(),
+                content: aiResponse,
                 isUser: false,
                 timestamp: new Date(),
-                searchData: data.message.searchData
+                distressDetected,
+                distressLevel
               }
             : msg
         )
       );
       
-      await saveChatMessage(data.message.content, false);
-      
-      voiceSynthesis.speak(data.message.content);
+      voiceSynthesis.speak(aiResponse);
       
     } catch (error: any) {
       console.error('Chat error:', error);

@@ -2,115 +2,27 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 
-// Constants for API Keys
-const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-const SERPER_API_KEY = Deno.env.get('SERPER_API_KEY');
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
-// CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Helper function to search the web using SERPER
-async function searchWeb(query: string) {
-  try {
-    const response = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: {
-        'X-API-KEY': SERPER_API_KEY || '',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        q: query,
-        gl: 'us',
-        hl: 'en',
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`SERPER API error: ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error searching web:', error);
-    return null;
-  }
-}
-
 serve(async (req) => {
-  // Handle CORS preflight requests
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // Check for API keys
-    if (!OPENAI_API_KEY) {
-      return new Response(
-        JSON.stringify({
-          error: 'OpenAI API key not configured',
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
-    }
-
-    // Get request body
-    const { message, conversationId } = await req.json();
+    const { message, conversationId, userId } = await req.json();
 
     if (!message) {
-      return new Response(
-        JSON.stringify({
-          error: 'No message provided',
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
+      throw new Error('No message provided');
     }
 
-    // Determine if we need to search for information
-    let searchResults = null;
-    let needsSearch = message.toLowerCase().includes('search') || 
-                     message.toLowerCase().includes('look up') || 
-                     message.toLowerCase().includes('find information');
-
-    if (needsSearch && SERPER_API_KEY) {
-      const searchQuery = message.replace(/search|look up|find information about/gi, '').trim();
-      searchResults = await searchWeb(searchQuery);
-    }
-
-    // Prepare messages for OpenAI
-    const messages = [
-      {
-        role: 'system',
-        content: `You are Guardian AI, a helpful and protective assistant focused on personal safety. 
-                 You provide information and guidance to help users stay safe in various situations.
-                 You are friendly, concerned, and reassuring in your tone.
-                 ${searchResults ? 'You have access to recent search results which you can use to provide accurate information.' : ''}`,
-      },
-    ];
-
-    // Add search results to the system message if available
-    if (searchResults) {
-      messages.push({
-        role: 'system',
-        content: `Search results: ${JSON.stringify(searchResults)}`,
-      });
-    }
-
-    // Add user message
-    messages.push({
-      role: 'user',
-      content: message,
-    });
-
-    // Send request to OpenAI
+    // Call OpenAI for chat completion
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -119,44 +31,58 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        messages,
+        messages: [
+          {
+            role: 'system',
+            content: `You are Guardian AI, a personal safety assistant. Your primary focus is on keeping the user safe, 
+                      providing guidance, and responding to safety concerns. Use a supportive and calm tone.
+                      If the user appears to be in distress, acknowledge it and offer appropriate advice.`
+          },
+          { role: 'user', content: message }
+        ],
         temperature: 0.7,
         max_tokens: 800,
       }),
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || 'OpenAI API error');
+      const errorData = await response.text();
+      console.error("OpenAI API error:", errorData);
+      throw new Error(`API error from OpenAI: ${response.status}`);
     }
 
     const data = await response.json();
     const aiMessage = data.choices[0].message.content;
 
-    // Return the response
+    // Simple distress detection 
+    const distressKeywords = ['help', 'emergency', 'scared', 'afraid', 'danger', 'hurt', 'injured', 'attack'];
+    const lowercaseMessage = message.toLowerCase();
+    
+    // Basic distress detection
+    const distressDetected = distressKeywords.some(keyword => lowercaseMessage.includes(keyword));
+    const distressLevel = distressDetected ? 0.7 : 0;
+
     return new Response(
       JSON.stringify({
         message: {
           content: aiMessage,
-          isSearchResult: !!searchResults,
-          searchData: searchResults,
+          distressDetected,
+          distressLevel,
         },
-        conversationId: conversationId || Date.now().toString(),
+        conversationId: conversationId || crypto.randomUUID(),
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      },
+      }
     );
   } catch (error) {
-    console.error('Error in AI Chat function:', error);
+    console.error('Error in AI chat function:', error);
     return new Response(
-      JSON.stringify({
-        error: error.message || 'Failed to process your request',
-      }),
+      JSON.stringify({ error: error.message }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      },
+      }
     );
   }
 });

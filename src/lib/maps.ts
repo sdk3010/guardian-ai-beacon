@@ -12,7 +12,7 @@ export const loadGoogleMapsScript = (): Promise<void> => {
     
     const script = document.createElement('script');
     script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry`;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
@@ -51,19 +51,43 @@ export const initMap = async (
       fullscreenControl: false,
     });
 
-    // Add marker for current location
-    new window.google.maps.Marker({
-      position: { lat: currentLocation.lat, lng: currentLocation.lng },
-      map,
-      icon: {
-        path: window.google.maps.SymbolPath.CIRCLE,
-        scale: 10,
-        fillColor: "#4285F4",
-        fillOpacity: 1,
-        strokeColor: "#FFFFFF",
-        strokeWeight: 2,
-      },
-      title: "Your location",
+    // Add info window for current location
+    const infoWindow = new window.google.maps.InfoWindow();
+    
+    // Try to get address for current location
+    const geocoder = new window.google.maps.Geocoder();
+    geocoder.geocode({ location: currentLocation }, (results, status) => {
+      let locationName = "Your current location";
+      
+      if (status === "OK" && results && results.length > 0) {
+        locationName = results[0].formatted_address;
+      }
+      
+      // Add marker for current location
+      const marker = new window.google.maps.Marker({
+        position: { lat: currentLocation.lat, lng: currentLocation.lng },
+        map,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 10,
+          fillColor: "#4285F4",
+          fillOpacity: 1,
+          strokeColor: "#FFFFFF",
+          strokeWeight: 2,
+        },
+        title: "Your location",
+      });
+      
+      // Show info window with address on click
+      marker.addListener('click', () => {
+        infoWindow.setContent(`
+          <div style="padding: 8px;">
+            <h3 style="margin: 0 0 4px 0; font-weight: bold;">Your Location</h3>
+            <p style="margin: 0;">${locationName}</p>
+          </div>
+        `);
+        infoWindow.open(map, marker);
+      });
     });
 
     // Add markers for safe places
@@ -77,7 +101,7 @@ export const initMap = async (
         title: place.name,
       });
 
-      const infoWindow = new window.google.maps.InfoWindow({
+      const placeWindow = new window.google.maps.InfoWindow({
         content: `
           <div style="padding: 8px;">
             <h3 style="margin: 0 0 8px 0; font-weight: bold;">${place.name}</h3>
@@ -89,7 +113,7 @@ export const initMap = async (
       });
 
       marker.addListener('click', () => {
-        infoWindow.open(map, marker);
+        placeWindow.open(map, marker);
       });
     });
   } catch (err) {

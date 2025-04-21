@@ -1,8 +1,6 @@
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
-
-const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,92 +8,66 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  // Handle CORS preflight requests
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // Check for API key
-    if (!ELEVENLABS_API_KEY) {
-      return new Response(
-        JSON.stringify({
-          error: 'ElevenLabs API key not configured',
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
-    }
-
-    // Get request body
-    const { text, voiceId } = await req.json();
+    const { text, voice } = await req.json();
 
     if (!text) {
-      return new Response(
-        JSON.stringify({
-          error: 'No text provided',
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
+      throw new Error('Text is required');
     }
 
-    // Use default voice if not provided
-    const voice = voiceId || 'EXAVITQu4vr4xnSDxMaL'; // Sarah voice
+    // Use ElevenLabs API
+    const apiKey = Deno.env.get('ELEVENLABS_API_KEY');
+    if (!apiKey) {
+      throw new Error('ElevenLabs API key not configured');
+    }
 
-    // Call ElevenLabs API
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
+    const voiceId = voice || 'EXAVITQu4vr4xnSDxMaL'; // Sarah voice by default
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`, {
       method: 'POST',
       headers: {
-        'xi-api-key': ELEVENLABS_API_KEY,
+        'Accept': 'audio/mpeg',
+        'xi-api-key': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        text,
-        model_id: 'eleven_multilingual_v2',
+        text: text,
+        model_id: 'eleven_monolingual_v1',
         voice_settings: {
-          stability: 0.5,
+          stability: 0.75,
           similarity_boost: 0.75,
-        },
+        }
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`ElevenLabs API error: ${error}`);
+      console.error("ElevenLabs API error:", error);
+      throw new Error('Failed to generate speech');
     }
 
-    // Convert the audio to base64
-    const audioArrayBuffer = await response.arrayBuffer();
+    // Convert audio buffer to base64
+    const arrayBuffer = await response.arrayBuffer();
     const base64Audio = btoa(
-      new Uint8Array(audioArrayBuffer).reduce(
-        (data, byte) => data + String.fromCharCode(byte),
-        ''
-      )
+      String.fromCharCode(...new Uint8Array(arrayBuffer))
     );
 
-    // Return the audio data
     return new Response(
-      JSON.stringify({
-        audioData: base64Audio,
-        contentType: 'audio/mpeg',
-      }),
+      JSON.stringify({ audioContent: base64Audio }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       },
     );
   } catch (error) {
-    console.error('Error in text-to-speech function:', error);
+    console.error('Text to speech error:', error);
     return new Response(
-      JSON.stringify({
-        error: error.message || 'Failed to convert text to speech',
-      }),
+      JSON.stringify({ error: error.message }),
       {
-        status: 500,
+        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       },
     );

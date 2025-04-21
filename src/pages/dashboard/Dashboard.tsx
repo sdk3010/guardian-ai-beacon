@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,11 +31,45 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (user) {
-      loadUserInfo();
+      ensureUserExists().then(() => loadUserInfo());
     } else {
       setIsLoading(false);
     }
   }, [user]);
+
+  const ensureUserExists = async () => {
+    if (!user) return;
+    
+    try {
+      // Check if user exists in public.users table
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      // If user doesn't exist, create a record
+      if (fetchError || !userData) {
+        console.log('User record not found, creating...');
+        
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: user.id,
+            email: user.email || '',
+            name: user.user_metadata?.name || 'User',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+        
+        if (insertError) {
+          console.error('Error creating user record:', insertError);
+        }
+      }
+    } catch (err) {
+      console.error('Error ensuring user exists:', err);
+    }
+  };
 
   const loadUserInfo = async () => {
     if (!user) return;
@@ -62,7 +95,7 @@ export default function Dashboard() {
       const activeAlerts = alertsData?.filter(alert => alert.status === 'active').length || 0;
       const totalAlerts = alertsData?.length || 0;
       
-      // Get user profile data - using maybeSingle to avoid errors if user doesn't exist yet
+      // Get user profile data
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
@@ -78,7 +111,7 @@ export default function Dashboard() {
         });
       }
       
-      // If user data doesn't exist in the public.users table yet, update last login
+      // Update last login
       if (userData) {
         const { error: updateError } = await supabase
           .from('users')
@@ -107,6 +140,13 @@ export default function Dashboard() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleProfileUpdate = async (imageUrl: string) => {
+    setUserInfo(prev => prev ? ({
+      ...prev,
+      profilePic: imageUrl
+    }) : null);
   };
 
   const formatDate = (dateString?: string) => {
@@ -180,22 +220,17 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <ProfileUpload 
-              currentImage={userInfo.profilePic}
-              onUploadSuccess={(imageUrl) => {
-                setUserInfo(prev => prev ? ({
-                  ...prev,
-                  profilePic: imageUrl
-                }) : null);
-              }}
+              currentImage={userInfo?.profilePic}
+              onUploadSuccess={handleProfileUpdate}
             />
             <div className="mt-6 text-center space-y-1">
-              <h3 className="font-medium text-lg">{userInfo.name}</h3>
-              <p className="text-sm text-muted-foreground">{userInfo.email}</p>
-              {userInfo.phone && (
+              <h3 className="font-medium text-lg">{userInfo?.name}</h3>
+              <p className="text-sm text-muted-foreground">{userInfo?.email}</p>
+              {userInfo?.phone && (
                 <p className="text-sm text-muted-foreground">{userInfo.phone}</p>
               )}
               <p className="text-xs text-muted-foreground mt-2">
-                Last login: {formatDate(userInfo.lastLogin)}
+                Last login: {formatDate(userInfo?.lastLogin)}
               </p>
             </div>
           </CardContent>
@@ -214,17 +249,17 @@ export default function Dashboard() {
               <div className="bg-primary/5 rounded-lg p-4 flex justify-between items-center">
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Active Alerts</h3>
-                  <p className="text-2xl font-bold">{userInfo.activeAlerts}</p>
+                  <p className="text-2xl font-bold">{userInfo?.activeAlerts}</p>
                 </div>
-                <div className={`rounded-full p-3 ${userInfo.activeAlerts > 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                  <AlertDescription className={`h-5 w-5 ${userInfo.activeAlerts > 0 ? 'text-red-500' : 'text-green-500'}`} />
+                <div className={`rounded-full p-3 ${userInfo?.activeAlerts > 0 ? 'bg-red-100' : 'bg-green-100'}`}>
+                  <AlertDescription className={`h-5 w-5 ${userInfo?.activeAlerts > 0 ? 'text-red-500' : 'text-green-500'}`} />
                 </div>
               </div>
 
               <div className="bg-primary/5 rounded-lg p-4 flex justify-between items-center">
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Total Alerts</h3>
-                  <p className="text-2xl font-bold">{userInfo.totalAlerts}</p>
+                  <p className="text-2xl font-bold">{userInfo?.totalAlerts}</p>
                 </div>
                 <div className="rounded-full p-3 bg-primary/10">
                   <Clock className="h-5 w-5 text-primary" />

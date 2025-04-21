@@ -1,11 +1,12 @@
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Camera, Upload } from "lucide-react";
-import { users } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
+import { useAuth } from '@/context/AuthContext';
 
 interface ProfileUploadProps {
   currentImage?: string;
@@ -18,6 +19,7 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const simulateProgress = () => {
     setUploadProgress(0);
@@ -64,12 +66,39 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     const progressInterval = simulateProgress();
 
     try {
-      const response = await users.uploadProfilePic(file);
+      // Upload to Supabase Storage
+      if (!user) throw new Error("User not authenticated");
+      
+      const fileName = `${user.id}-${Date.now()}`;
+      const fileExt = file.name.split('.').pop();
+      const filePath = `${fileName}.${fileExt}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('profiles')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: publicUrlData } = await supabase.storage
+        .from('profiles')
+        .getPublicUrl(filePath);
+
+      const imageUrl = publicUrlData.publicUrl;
+
+      // Update user profile in database
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ profile_image_url: imageUrl })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
       clearInterval(progressInterval);
       setUploadProgress(100);
       
       setTimeout(() => {
-        onUploadSuccess(response.data.imageUrl);
+        onUploadSuccess(imageUrl);
         toast({
           title: "Success",
           description: "Profile picture updated successfully",
@@ -79,13 +108,14 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     } catch (err: any) {
       clearInterval(progressInterval);
       setUploadProgress(0);
-      const errorMessage = err.response?.data?.message || 'Failed to upload image';
+      const errorMessage = err.message || 'Failed to upload image';
       setError(errorMessage);
       toast({
         variant: "destructive",
         title: "Upload failed",
         description: errorMessage,
       });
+      console.error("Profile upload error:", err);
     } finally {
       setTimeout(() => {
         setIsUploading(false);

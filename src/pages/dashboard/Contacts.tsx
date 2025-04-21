@@ -42,11 +42,45 @@ export default function Contacts() {
 
   useEffect(() => {
     if (user) {
-      loadContacts();
+      ensureUserExists().then(() => loadContacts());
     } else {
       setIsLoading(false);
     }
   }, [user]);
+
+  const ensureUserExists = async () => {
+    if (!user) return;
+    
+    try {
+      // Check if user exists in public.users table
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      // If user doesn't exist, create a record
+      if (fetchError || !userData) {
+        console.log('User record not found, creating...');
+        
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: user.id,
+            email: user.email || '',
+            name: user.user_metadata?.name || 'User',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+        
+        if (insertError) {
+          console.error('Error creating user record:', insertError);
+        }
+      }
+    } catch (err) {
+      console.error('Error ensuring user exists:', err);
+    }
+  };
 
   const loadContacts = async () => {
     if (!user) return;
@@ -141,6 +175,10 @@ export default function Contacts() {
     setError('');
 
     try {
+      // First ensure the user exists in the public.users table
+      await ensureUserExists();
+      
+      // Now add the contact
       const { data, error } = await supabase
         .from('emergency_contacts')
         .insert({

@@ -32,6 +32,7 @@ export default function Tracking() {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationAddress, setLocationAddress] = useState<string>('');
   const [safePlaces, setSafePlaces] = useState<SafePlace[]>([]);
   const [error, setError] = useState('');
   const [userInput, setUserInput] = useState('');
@@ -41,6 +42,7 @@ export default function Tracking() {
   const watchId = useRef<number | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const locationRetries = useRef(0);
+  const [sessionId, setSessionId] = useState<string>('');
 
   // Safety assessment based on various factors
   const getSafetyStatus = () => {
@@ -50,16 +52,56 @@ export default function Tracking() {
   };
 
   useEffect(() => {
+    if (user) {
+      ensureUserExists();
+    }
+    
     // Always attempt to load the map library on component mount
     loadGoogleMapsScript().catch(err => {
       console.error("Failed to load Google Maps:", err);
       setError("Failed to load map service. Please check your internet connection.");
     });
     
+    setSessionId(crypto.randomUUID());
+    
     return () => {
       stopTracking();
     };
   }, []);
+
+  const ensureUserExists = async () => {
+    if (!user) return;
+    
+    try {
+      // Check if user exists in public.users table
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      // If user doesn't exist, create a record
+      if (fetchError || !userData) {
+        console.log('User record not found, creating...');
+        
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: user.id,
+            email: user.email || '',
+            name: user.user_metadata?.name || 'User',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+        
+        if (insertError) {
+          console.error('Error creating user record:', insertError);
+        }
+      }
+    } catch (err) {
+      console.error('Error ensuring user exists:', err);
+    }
+  };
 
   useEffect(() => {
     if (isTracking) {
@@ -77,6 +119,7 @@ export default function Tracking() {
     if (currentLocation && isTracking) {
       renderMap();
       fetchSafePlaces();
+      reverseGeocode(currentLocation);
       
       // Save location to Supabase
       if (user) {
@@ -115,6 +158,24 @@ export default function Tracking() {
     } catch (err) {
       console.error("Error rendering map:", err);
       setError("Failed to display map. Please try again.");
+    }
+  };
+
+  const reverseGeocode = async (location: { lat: number; lng: number }) => {
+    try {
+      // Load Google Maps API if not already loaded
+      await loadGoogleMapsScript();
+      
+      const geocoder = new window.google.maps.Geocoder();
+      geocoder.geocode({ location }, (results, status) => {
+        if (status === "OK" && results && results.length > 0) {
+          setLocationAddress(results[0].formatted_address);
+        } else {
+          console.error("Geocoder failed:", status);
+        }
+      });
+    } catch (err) {
+      console.error("Error reverse geocoding:", err);
     }
   };
 
@@ -165,6 +226,11 @@ export default function Tracking() {
   };
 
   const stopTracking = () => {
+    // Save tracking history
+    if (user && isTracking && sessionId) {
+      saveTrackingHistory();
+    }
+    
     // Stop location tracking
     if (watchId.current !== null) {
       navigator.geolocation.clearWatch(watchId.current);
@@ -186,6 +252,39 @@ export default function Tracking() {
     }
   };
 
+  const saveTrackingHistory = async () => {
+    if (!user || !sessionId) return;
+    
+    try {
+      // Save session data to safety_logs
+      const { error } = await supabase
+        .from('safety_logs')
+        .insert({
+          user_id: user.id,
+          title: 'Location tracking session',
+          description: `Tracking session ${sessionId}`,
+          category: 'tracking',
+          severity: 'low',
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          location: currentLocation ? JSON.stringify(currentLocation) : null,
+          metadata: JSON.stringify({
+            session_id: sessionId,
+            duration_minutes: Math.floor((Date.now() - new Date(sessionId).getTime()) / 60000),
+            address: locationAddress || 'Unknown location'
+          })
+        });
+        
+      if (error) {
+        console.error("Error saving tracking history:", error);
+      } else {
+        console.log("Tracking history saved successfully");
+      }
+    } catch (err) {
+      console.error("Failed to save tracking history:", err);
+    }
+  };
+
   const handlePositionUpdate = async (position: GeolocationPosition) => {
     console.log("Got position update:", position.coords);
     const location = {
@@ -197,25 +296,8 @@ export default function Tracking() {
     locationRetries.current = 0;
 
     try {
-      // Send location update to backend - fallback to Supabase if API fails
-      try {
-        const response = await fetch("https://guardianai-backend.sdk3010.repl.co/track", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": "ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=="
-          },
-          body: JSON.stringify({ location })
-        });
-        
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-      } catch (err) {
-        console.error("Backend API error, using Supabase fallback:", err);
-        if (user) {
-          saveLocationToDatabase(location);
-        }
+      if (user) {
+        saveLocationToDatabase(location);
       }
     } catch (err) {
       console.error("Error updating location:", err);
@@ -244,6 +326,15 @@ export default function Tracking() {
           title: "Location Unavailable",
           description: "Trying again... Please ensure you have a clear GPS signal.",
         });
+        
+        // Try again after a delay
+        setTimeout(() => {
+          navigator.geolocation.getCurrentPosition(
+            handlePositionUpdate,
+            handlePositionError,
+            { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+          );
+        }, 2000);
       } else {
         setIsTracking(false);
         toast({
@@ -260,6 +351,15 @@ export default function Tracking() {
           title: "Location Timeout",
           description: "Trying again... This may happen in areas with poor GPS signal.",
         });
+        
+        // Try again after a delay
+        setTimeout(() => {
+          navigator.geolocation.getCurrentPosition(
+            handlePositionUpdate,
+            handlePositionError,
+            { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+          );
+        }, 2000);
       } else {
         setIsTracking(false);
         toast({
@@ -277,80 +377,162 @@ export default function Tracking() {
     setSafePlaces([]);
     
     try {
-      // Try the backend API first
-      try {
-        const response = await fetch(
-          `https://guardianai-backend.sdk3010.repl.co/map/safe-places?lat=${currentLocation.lat}&lng=${currentLocation.lng}`,
-          {
-            headers: {
-              "x-api-key": "ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=="
-            }
+      // Use Google Places API through Maps
+      await loadGoogleMapsScript();
+      
+      if (window.google && window.google.maps && window.google.maps.places) {
+        const location = new window.google.maps.LatLng(currentLocation.lat, currentLocation.lng);
+        const placesService = new window.google.maps.places.PlacesService(document.createElement('div'));
+        
+        const request = {
+          location: location,
+          radius: 1500,
+          type: ['police', 'hospital', 'pharmacy', 'fire_station']
+        };
+        
+        placesService.nearbySearch(request, (results, status) => {
+          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+            const places: SafePlace[] = results.map((place, index) => {
+              // Calculate distance (simplified version)
+              const placeLocation = place.geometry?.location;
+              const distance = placeLocation 
+                ? calculateDistance(
+                    currentLocation.lat, 
+                    currentLocation.lng, 
+                    placeLocation.lat(), 
+                    placeLocation.lng()
+                  ) 
+                : 0;
+                
+              return {
+                id: place.place_id || `place-${index}`,
+                name: place.name || 'Unknown Place',
+                type: place.types?.[0] || 'location',
+                distance: distance,
+                address: place.vicinity || '',
+                rating: place.rating,
+                lat: place.geometry?.location.lat() || 0,
+                lng: place.geometry?.location.lng() || 0
+              };
+            });
+            
+            setSafePlaces(places);
+          } else {
+            // Fallback to mock data if Google Places fails
+            const mockSafePlaces: SafePlace[] = [
+              {
+                id: "place1",
+                name: "City Police Station",
+                type: "Police",
+                distance: 0.7,
+                address: "123 Safety St",
+                lat: currentLocation.lat + 0.002,
+                lng: currentLocation.lng + 0.002
+              },
+              {
+                id: "place2",
+                name: "Downtown Hospital",
+                type: "Hospital",
+                distance: 1.2,
+                address: "456 Health Ave",
+                lat: currentLocation.lat - 0.003,
+                lng: currentLocation.lng + 0.001
+              },
+              {
+                id: "place3",
+                name: "24/7 Pharmacy",
+                type: "Pharmacy",
+                distance: 0.5,
+                address: "789 Medicine Rd",
+                lat: currentLocation.lat + 0.001,
+                lng: currentLocation.lng - 0.002
+              }
+            ];
+            
+            setSafePlaces(mockSafePlaces);
           }
-        );
-        
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        setSafePlaces(data);
-      } catch (err) {
-        console.error("Backend API error:", err);
-        
-        // Fallback to mock data
-        const mockSafePlaces: SafePlace[] = [
-          {
-            id: "place1",
-            name: "City Police Station",
-            type: "Police",
-            distance: 0.7,
-            address: "123 Safety St",
-            lat: currentLocation.lat + 0.002,
-            lng: currentLocation.lng + 0.002
-          },
-          {
-            id: "place2",
-            name: "Downtown Hospital",
-            type: "Hospital",
-            distance: 1.2,
-            address: "456 Health Ave",
-            lat: currentLocation.lat - 0.003,
-            lng: currentLocation.lng + 0.001
-          },
-          {
-            id: "place3",
-            name: "24/7 Pharmacy",
-            type: "Pharmacy",
-            distance: 0.5,
-            address: "789 Medicine Rd",
-            lat: currentLocation.lat + 0.001,
-            lng: currentLocation.lng - 0.002
-          }
-        ];
-        
-        setSafePlaces(mockSafePlaces);
+        });
+      } else {
+        // Fallback if Google Places isn't available
+        throw new Error("Google Places API not available");
       }
     } catch (err) {
       console.error("Error fetching safe places:", err);
+      
+      // Fallback to mock data
+      const mockSafePlaces: SafePlace[] = [
+        {
+          id: "place1",
+          name: "City Police Station",
+          type: "Police",
+          distance: 0.7,
+          address: "123 Safety St",
+          lat: currentLocation.lat + 0.002,
+          lng: currentLocation.lng + 0.002
+        },
+        {
+          id: "place2",
+          name: "Downtown Hospital",
+          type: "Hospital",
+          distance: 1.2,
+          address: "456 Health Ave",
+          lat: currentLocation.lat - 0.003,
+          lng: currentLocation.lng + 0.001
+        },
+        {
+          id: "place3",
+          name: "24/7 Pharmacy",
+          type: "Pharmacy",
+          distance: 0.5,
+          address: "789 Medicine Rd",
+          lat: currentLocation.lat + 0.001,
+          lng: currentLocation.lng - 0.002
+        }
+      ];
+      
+      setSafePlaces(mockSafePlaces);
     }
+  };
+
+  // Calculate distance between two coordinates (Haversine formula)
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 3958.8; // Earth radius in miles
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
   };
 
   const startVoiceRecognition = () => {
     if (isListening) return;
 
-    voiceRecognition.start(
-      // On voice input
-      (text) => {
-        setUserInput(text);
-        handleUserInput(text);
-      },
-      // On trigger phrase
-      async (phrase) => {
-        handleEmergencyPhrase(phrase);
-      }
-    );
-    
-    setIsListening(true);
+    try {
+      voiceRecognition.start(
+        // On voice input
+        (text) => {
+          setUserInput(text);
+          handleUserInput(text);
+        },
+        // On trigger phrase
+        async (phrase) => {
+          handleEmergencyPhrase(phrase);
+        }
+      );
+      
+      setIsListening(true);
+      console.log("Voice recognition started");
+    } catch (err) {
+      console.error("Error starting voice recognition:", err);
+      toast({
+        variant: "destructive",
+        title: "Voice Recognition Error",
+        description: "Could not start voice recognition. Please try again.",
+      });
+    }
   };
 
   const toggleMicrophone = () => {
@@ -375,7 +557,9 @@ export default function Tracking() {
 
     // Handle various voice commands
     if (text.includes('where am i')) {
-      if (currentLocation) {
+      if (locationAddress) {
+        speak(`You are at ${locationAddress}`);
+      } else if (currentLocation) {
         speak(`You are at latitude ${currentLocation.lat.toFixed(4)} and longitude ${currentLocation.lng.toFixed(4)}`);
       } else {
         speak("I don't have your current location yet");
@@ -389,6 +573,35 @@ export default function Tracking() {
     } else if (text.includes('am i safe')) {
       const { status, message } = getSafetyStatus();
       speak(message);
+    } else if (text.length > 3) {
+      // Acknowledge other inputs
+      speak(`I heard you say "${text}". How can I help you with your safety?`);
+    }
+
+    // Save voice log to database
+    if (user && text.length > 3) {
+      saveVoiceLog(text);
+    }
+  };
+
+  const saveVoiceLog = async (text: string) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase
+        .from('voice_logs')
+        .insert({
+          user_id: user.id,
+          text: text,
+          distress_detected: TRIGGER_PHRASES.some(phrase => text.toLowerCase().includes(phrase.toLowerCase())),
+          distress_level: TRIGGER_PHRASES.some(phrase => text.toLowerCase().includes(phrase.toLowerCase())) ? 0.8 : 0
+        });
+        
+      if (error) {
+        console.error("Error saving voice log:", error);
+      }
+    } catch (err) {
+      console.error("Failed to save voice log:", err);
     }
   };
 
@@ -404,40 +617,19 @@ export default function Tracking() {
     
     if (currentLocation) {
       try {
-        // Try the backend API first
-        try {
-          const response = await fetch("https://guardianai-backend.sdk3010.repl.co/trigger-alert", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": "ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=="
-            },
-            body: JSON.stringify({
-              location: currentLocation,
-              message: `Emergency triggered by voice: "${phrase}"`
-            })
+        // Insert directly to Supabase
+        const { error: alertError } = await supabase
+          .from('alerts')
+          .insert({
+            user_id: user.id,
+            type: 'voice',
+            latitude: currentLocation.lat,
+            longitude: currentLocation.lng,
+            message: `Emergency triggered by voice: "${phrase}"`,
+            status: 'active'
           });
-          
-          if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
-          }
-        } catch (err) {
-          console.error("Backend API error, using Supabase fallback:", err);
-          
-          // Fallback to Supabase
-          const { error } = await supabase
-            .from('alerts')
-            .insert({
-              user_id: user.id,
-              type: 'voice',
-              latitude: currentLocation.lat,
-              longitude: currentLocation.lng,
-              message: `Emergency triggered by voice: "${phrase}"`,
-              status: 'active'
-            });
             
-          if (error) throw error;
-        }
+        if (alertError) throw alertError;
         
         speak("Emergency alert sent to your contacts");
         toast({
