@@ -1,13 +1,13 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { users } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import ProfileUpload from '@/components/profile/ProfileUpload';
-import { MapPin, Clock, Phone, Shield, ArrowRight } from "lucide-react";
+import { MapPin, Clock, Phone, Shield, ArrowRight, AlertTriangle } from "lucide-react";
 import EmergencyButton from '@/components/safety/EmergencyButton';
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 
 interface UserInfo {
   id: string;
@@ -22,22 +22,62 @@ interface UserInfo {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    loadUserInfo();
-  }, []);
+    if (user) {
+      loadUserInfo();
+    }
+  }, [user]);
 
   const loadUserInfo = async () => {
+    if (!user) return;
+
     try {
-      const response = await users.getInfo();
-      setUserInfo(response.data);
-      // Update localStorage for sidebar
-      localStorage.setItem('user', JSON.stringify(response.data));
+      console.log('Loading user info for:', user.id);
+      
+      // Get alert counts
+      const { data: alertsData, error: alertsError } = await supabase
+        .from('alerts')
+        .select('id, status')
+        .eq('user_id', user.id);
+      
+      if (alertsError) throw alertsError;
+      
+      const activeAlerts = alertsData?.filter(alert => alert.status === 'active').length || 0;
+      const totalAlerts = alertsData?.length || 0;
+      
+      // Get user profile data (or create if doesn't exist)
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .upsert({ 
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.name || 'User',
+          last_login: new Date().toISOString()
+        })
+        .select('*')
+        .single();
+      
+      if (userError) throw userError;
+      
+      // Set formatted user info
+      setUserInfo({
+        id: user.id,
+        name: userData?.name || user.user_metadata?.name || 'User',
+        email: user.email || '',
+        profilePic: userData?.profile_image_url,
+        activeAlerts,
+        totalAlerts,
+        lastLogin: userData?.last_login,
+        phone: userData?.phone
+      });
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to load user information');
+      console.error('Error loading user info:', err);
+      setError(err.message || 'Failed to load user information');
     } finally {
       setIsLoading(false);
     }
@@ -54,6 +94,22 @@ export default function Dashboard() {
       minute: '2-digit',
     }).format(date);
   };
+
+  if (!user) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="py-10 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
+            <p className="text-muted-foreground">
+              You need to be logged in to access your dashboard.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

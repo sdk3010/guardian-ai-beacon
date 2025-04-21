@@ -51,6 +51,7 @@ export default function Contacts() {
     
     setError('');
     try {
+      console.log('Fetching contacts for user ID:', user.id);
       const { data, error } = await supabase
         .from('emergency_contacts')
         .select('*')
@@ -128,7 +129,20 @@ export default function Contacts() {
     setError('');
 
     try {
-      // Insert the contact directly to Supabase
+      // Create a profiles record for the user if it doesn't exist
+      const { error: profileError } = await supabase
+        .from('users')
+        .upsert({ 
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.name || 'User'
+        });
+      
+      if (profileError) {
+        console.error('Error ensuring user profile exists:', profileError);
+      }
+      
+      // Now insert the contact
       const { data, error } = await supabase
         .from('emergency_contacts')
         .insert({

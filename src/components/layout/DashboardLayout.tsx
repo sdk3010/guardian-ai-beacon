@@ -1,37 +1,32 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { User, Shield, Clock, Phone, MapPin, LogOut, Menu, X, MessageSquare } from "lucide-react";
+import { User, Shield, Clock, Phone, LogOut, Menu, X, MessageSquare, MapPin } from "lucide-react";
 import FloatingTrackButton from '@/components/tracking/FloatingTrackButton';
 import ThemeToggle from '@/components/theme/ThemeToggle';
+import { useAuth } from '@/context/AuthContext';
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [user, setUser] = useState<any>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    try {
-      const userData = localStorage.getItem('user');
-      if (userData) {
-        setUser(JSON.parse(userData));
-      }
-    } catch (error) {
-      console.error('Error parsing user data:', error);
-    }
-  }, []);
+  const { user, signOut } = useAuth();
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [location.pathname]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const handleLogout = async () => {
+    await signOut();
     navigate('/login');
   };
+
+  useEffect(() => {
+    if (!user) {
+      navigate('/login');
+    }
+  }, [user, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -63,11 +58,11 @@ export default function DashboardLayout() {
             {user && (
               <div className="flex items-center gap-3 mb-6 p-3 rounded-lg bg-primary/5">
                 <Avatar>
-                  <AvatarImage src={user.profilePic} />
+                  <AvatarImage src={user.user_metadata?.avatar_url} />
                   <AvatarFallback><User /></AvatarFallback>
                 </Avatar>
                 <div>
-                  <h3 className="font-medium">{user.name}</h3>
+                  <h3 className="font-medium">{user.user_metadata?.name || user.email}</h3>
                   <p className="text-xs text-muted-foreground">{user.email}</p>
                 </div>
               </div>
@@ -148,11 +143,11 @@ export default function DashboardLayout() {
                 {user && (
                   <>
                     <Avatar className="h-20 w-20">
-                      <AvatarImage src={user.profilePic} />
+                      <AvatarImage src={user.user_metadata?.avatar_url} />
                       <AvatarFallback className="text-lg"><User /></AvatarFallback>
                     </Avatar>
                     <div className="text-center">
-                      <h2 className="font-bold text-xl">{user.name}</h2>
+                      <h2 className="font-bold text-xl">{user.user_metadata?.name || user.email}</h2>
                       <p className="text-sm text-muted-foreground">{user.email}</p>
                     </div>
                   </>

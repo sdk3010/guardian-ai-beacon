@@ -1,11 +1,11 @@
-
 import { useState, useEffect } from 'react';
-import { alerts } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { MapPin, Clock, AlertTriangle, Trash2 } from "lucide-react";
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,7 +18,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-interface Alert {
+interface AlertItem {
   id: string;
   timestamp: string;
   type: string;
@@ -32,38 +32,76 @@ interface Alert {
 
 export default function History() {
   const { toast } = useToast();
-  const [alertHistory, setAlertHistory] = useState<Alert[]>([]);
+  const { user } = useAuth();
+  const [alertHistory, setAlertHistory] = useState<AlertItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeletingAlert, setIsDeletingAlert] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    loadAlerts();
-  }, []);
+    if (user) {
+      loadAlerts();
+    }
+  }, [user]);
 
   const loadAlerts = async () => {
+    if (!user) return;
+    
     setError('');
     try {
-      const response = await alerts.getAll();
-      setAlertHistory(response.data);
+      console.log('Fetching alerts for user ID:', user.id);
+      
+      const { data, error: fetchError } = await supabase
+        .from('alerts')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      
+      if (fetchError) throw fetchError;
+      
+      const formattedAlerts = data?.map(alert => ({
+        id: alert.id,
+        timestamp: alert.created_at,
+        type: alert.type || 'emergency',
+        location: {
+          lat: alert.latitude || 0,
+          lng: alert.longitude || 0,
+        },
+        status: alert.status as 'active' | 'resolved',
+        message: alert.message
+      })) || [];
+      
+      console.log('Loaded alerts:', formattedAlerts);
+      setAlertHistory(formattedAlerts);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to load alert history');
+      console.error('Error loading alerts:', err);
+      setError(err.message || 'Failed to load alert history');
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleDeleteAlert = async (id: string) => {
+    if (!user) return;
+    
     setIsDeletingAlert(id);
     try {
-      await alerts.delete(id);
+      const { error: deleteError } = await supabase
+        .from('alerts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+      
+      if (deleteError) throw deleteError;
+      
       setAlertHistory(prev => prev.filter(alert => alert.id !== id));
       toast({
         title: "Alert Deleted",
         description: "Alert has been removed from your history",
       });
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to delete alert');
+      console.error('Error deleting alert:', err);
+      setError(err.message || 'Failed to delete alert');
       toast({
         variant: "destructive",
         title: "Failed to Delete",
@@ -95,6 +133,22 @@ export default function History() {
         return <AlertTriangle className="h-5 w-5 text-primary" />;
     }
   };
+
+  if (!user) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="py-10 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
+            <p className="text-muted-foreground">
+              You need to be logged in to view your alert history.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
