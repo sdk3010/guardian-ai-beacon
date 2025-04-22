@@ -112,20 +112,41 @@ export class TrackingService {
   
   // Helper method to convert database objects to TypeScript interface
   private static convertDbSessionToTrackingSession(dbSession: any): TrackingSession {
+    // Handle different location formats - it might be a string that needs parsing,
+    // or it might already be parsed as an object
+    let startLocation: { lat: number; lng: number };
+    let endLocation: { lat: number; lng: number } | undefined = undefined;
+    
+    try {
+      // Try to parse start_location if it's a string
+      if (typeof dbSession.start_location === 'string') {
+        startLocation = JSON.parse(dbSession.start_location);
+      } else {
+        startLocation = dbSession.start_location;
+      }
+      
+      // Try to parse end_location if it exists and is a string
+      if (dbSession.end_location) {
+        if (typeof dbSession.end_location === 'string') {
+          endLocation = JSON.parse(dbSession.end_location);
+        } else {
+          endLocation = dbSession.end_location;
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing location data:', e);
+      // Fallback to a default location if parsing fails
+      startLocation = { lat: 0, lng: 0 };
+    }
+    
     return {
       id: dbSession.id,
       user_id: dbSession.user_id,
-      start_location: typeof dbSession.start_location === 'string' 
-        ? JSON.parse(dbSession.start_location) 
-        : dbSession.start_location,
-      end_location: dbSession.end_location 
-        ? (typeof dbSession.end_location === 'string' 
-          ? JSON.parse(dbSession.end_location) 
-          : dbSession.end_location) 
-        : undefined,
+      start_location: startLocation,
+      end_location: endLocation,
       start_time: dbSession.start_time,
       end_time: dbSession.end_time,
-      status: dbSession.status,
+      status: dbSession.status as 'active' | 'completed',
       created_at: dbSession.created_at,
       updated_at: dbSession.updated_at
     };
@@ -133,13 +154,26 @@ export class TrackingService {
   
   // Helper method to convert database objects to TypeScript interface
   private static convertDbPointToLocationPoint(dbPoint: any): LocationPoint {
+    let locationData: { lat: number; lng: number };
+    
+    try {
+      // Try to parse location if it's a string
+      if (typeof dbPoint.location === 'string') {
+        locationData = JSON.parse(dbPoint.location);
+      } else {
+        locationData = dbPoint.location;
+      }
+    } catch (e) {
+      console.error('Error parsing location data:', e);
+      // Fallback to a default location if parsing fails
+      locationData = { lat: 0, lng: 0 };
+    }
+    
     return {
       id: dbPoint.id,
       session_id: dbPoint.session_id,
       user_id: dbPoint.user_id,
-      location: typeof dbPoint.location === 'string' 
-        ? JSON.parse(dbPoint.location)
-        : dbPoint.location,
+      location: locationData,
       accuracy: dbPoint.accuracy,
       timestamp: dbPoint.timestamp,
       created_at: dbPoint.created_at

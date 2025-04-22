@@ -29,16 +29,33 @@ export default function Chat() {
   const fetchChatHistory = useCallback(async () => {
     if (!user) return;
     
-    const { data, error } = await supabase
-      .from('chat_history')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: true });
-    
-    if (data) {
-      setMessages(data);
+    try {
+      const { data, error } = await supabase
+        .from('chat_history')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true });
+      
+      if (error) throw error;
+      
+      if (data) {
+        setMessages(data.map(item => ({
+          id: item.id,
+          message: item.message,
+          is_user: item.is_user,
+          created_at: item.created_at,
+          agent_type: item.is_user ? undefined : 'responder'
+        })));
+      }
+    } catch (err) {
+      console.error('Error fetching chat history:', err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load chat history.",
+      });
     }
-  }, [user]);
+  }, [user, toast]);
 
   useEffect(() => {
     fetchChatHistory();
@@ -62,27 +79,52 @@ export default function Chat() {
     setIsLoading(true);
 
     try {
-      const response = await ai.chat(userInput);
+      console.log('Sending message to AI:', userInput);
+      
+      // Save user message to Supabase
+      const { error: userMsgError } = await supabase.from('chat_history').insert({
+        user_id: user.id,
+        message: userInput,
+        is_user: true
+      });
+      
+      if (userMsgError) {
+        console.error('Error saving user message:', userMsgError);
+      }
+      
+      // Make API call for response
+      const response = await fetch('https://guardianai-backend.sdk3010.repl.co/ai/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=='
+        },
+        body: JSON.stringify({ message: userInput }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('AI response data:', data);
       
       const aiMessage: ChatMessage = {
-        message: response.data.message,
+        message: data.message || "I'm having trouble understanding. Could you rephrase that?",
         is_user: false,
-        agent_type: response.data.agent_type || 'responder'
+        agent_type: data.agent_type || 'responder'
       };
 
-      // Save messages to Supabase
-      await Promise.all([
-        supabase.from('chat_history').insert({
-          user_id: user.id,
-          message: userInput,
-          is_user: true
-        }),
-        supabase.from('chat_history').insert({
-          user_id: user.id,
-          message: aiMessage.message,
-          is_user: false
-        })
-      ]);
+      // Save AI message to Supabase
+      const { error: aiMsgError } = await supabase.from('chat_history').insert({
+        user_id: user.id,
+        message: aiMessage.message,
+        is_user: false
+      });
+      
+      if (aiMsgError) {
+        console.error('Error saving AI message:', aiMsgError);
+      }
 
       setMessages(prev => [...prev, aiMessage]);
       

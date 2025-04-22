@@ -3,20 +3,30 @@
  * Load Google Maps script dynamically
  */
 export const loadGoogleMapsScript = (): Promise<void> => {
-  if (window.google && window.google.maps) return Promise.resolve();
-  
   return new Promise<void>((resolve, reject) => {
+    if (window.google && window.google.maps) return resolve();
+    
     if (document.getElementById('google-maps-script')) {
       return resolve();
     }
     
     const script = document.createElement('script');
     script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry&loading=async`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry&callback=initGoogleMaps`;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = (error) => reject(error);
+    
+    // Define callback function
+    window.initGoogleMaps = function() {
+      console.log('Google Maps API loaded successfully');
+      resolve();
+    };
+    
+    script.onerror = (error) => {
+      console.error('Error loading Google Maps script:', error);
+      reject(error);
+    };
+    
     document.head.appendChild(script);
   });
 };
@@ -123,3 +133,10 @@ export const initMap = async (
     throw new Error("Failed to load map. Please try again.");
   }
 };
+
+// Add this global to make TypeScript happy
+declare global {
+  interface Window {
+    initGoogleMaps: () => void;
+  }
+}

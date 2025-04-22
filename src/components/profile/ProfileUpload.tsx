@@ -36,32 +36,29 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
   };
 
   // Check if 'profiles' bucket exists, create if not
-  const checkAndCreateProfilesBucket = async () => {
+  const createProfilesBucket = async () => {
     try {
-      const { data: buckets, error } = await supabase.storage.listBuckets();
+      // Call the edge function to create the bucket
+      const response = await fetch('/api/create-storage-bucket', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ bucketName: 'profiles' }),
+      });
       
-      if (error) throw error;
-      
-      const profilesBucketExists = buckets.some(bucket => bucket.name === 'profiles');
-      
-      if (!profilesBucketExists) {
-        console.log('Creating profiles bucket...');
-        const { error: createError } = await supabase.storage.createBucket('profiles', {
-          public: true,
-          fileSizeLimit: 5 * 1024 * 1024, // 5MB
-        });
-        
-        if (createError) throw createError;
-        
-        console.log('Profiles bucket created successfully');
+      if (!response.ok) {
+        console.error('Failed to create profiles bucket:', await response.text());
+        // Continue anyway, as we'll try to upload and see if it works
       }
     } catch (err) {
-      console.error('Error checking/creating profiles bucket:', err);
+      console.error('Error creating profiles bucket:', err);
+      // Continue anyway, as we'll try to upload and see if it works
     }
   };
   
   useEffect(() => {
-    checkAndCreateProfilesBucket();
+    createProfilesBucket();
   }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,27 +95,33 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
       // Upload to Supabase Storage
       if (!user) throw new Error("User not authenticated");
       
-      // Make sure the bucket exists
-      await checkAndCreateProfilesBucket();
+      // Try to create the bucket again just in case
+      await createProfilesBucket();
       
       const fileName = `${user.id}-${Date.now()}`;
       const fileExt = file.name.split('.').pop();
       const filePath = `${fileName}.${fileExt}`;
 
       console.log(`Uploading file to profiles bucket: ${filePath}`);
+      
+      // First try public upload
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('profiles')
         .upload(filePath, file, {
           cacheControl: '3600',
-          upsert: true
+          upsert: true,
+          contentType: file.type
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error('Error uploading file:', uploadError);
+        throw uploadError;
+      }
 
       console.log('File uploaded successfully:', uploadData);
 
       // Get public URL
-      const { data: publicUrlData } = await supabase.storage
+      const { data: publicUrlData } = supabase.storage
         .from('profiles')
         .getPublicUrl(filePath);
 

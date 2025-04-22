@@ -18,6 +18,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('I\'m listening...');
   const [inputMessage, setInputMessage] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -37,6 +38,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
     voiceRecognition.start(
       (text) => {
         setTranscript(text);
+        console.log("Voice recognition transcript:", text);
       },
       (triggerPhrase) => {
         // Handle emergency trigger phrases
@@ -68,6 +70,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
     // Reset states
     setInputMessage('');
     setTranscript("I'm listening...");
+    setIsProcessing(true);
     
     // Process the message
     if (onMessage) {
@@ -78,17 +81,26 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
     for (const phrase of TRIGGER_PHRASES) {
       if (message.toLowerCase().includes(phrase)) {
         handleEmergencyTrigger(phrase);
+        setIsProcessing(false);
         return;
       }
     }
 
     try {
+      console.log("Sending message to AI:", message);
       // Get AI response for voice interaction
       const response = await ai.chat(message);
-      const aiResponse = response.data.message;
+      console.log("AI response:", response);
+      const aiResponse = response?.data?.message || "I'm sorry, I couldn't process your request.";
       
       // Speak the response
-      voiceSynthesis.speak(aiResponse);
+      try {
+        await voiceSynthesis.speak(aiResponse, true);
+      } catch (speakError) {
+        console.error("Error speaking response:", speakError);
+        // Fallback to web speech if ElevenLabs fails
+        await voiceSynthesis.speak(aiResponse, false);
+      }
     } catch (error) {
       console.error("Error getting AI response:", error);
       toast({
@@ -96,6 +108,11 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
         title: "Error",
         description: "Could not get a response from the assistant.",
       });
+      
+      // Speak error message
+      await voiceSynthesis.speak("I'm sorry, I couldn't connect to my intelligence service. Please try again later.", false);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -143,10 +160,12 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
             onKeyPress={handleKeyPress}
             placeholder="Type a message..."
             className="bg-[#282c3a] border-[#9b87f5]/30 text-white"
+            disabled={isProcessing}
           />
           <Button 
             onClick={handleSendMessage} 
             variant="outline"
+            disabled={isProcessing}
             className="border-[#9b87f5] text-[#9b87f5] hover:bg-[#9b87f5] hover:text-white"
           >
             <Send className="h-4 w-4" />
@@ -155,6 +174,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
             onClick={toggleListening} 
             variant={isListening ? "destructive" : "outline"}
             className={isListening ? "" : "border-[#9b87f5] text-[#9b87f5] hover:bg-[#9b87f5] hover:text-white"}
+            disabled={isProcessing}
           >
             {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </Button>
