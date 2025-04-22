@@ -1,918 +1,536 @@
-
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Mic, MicOff, MapPin, CheckCircle, AlertTriangle } from "lucide-react";
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/context/AuthContext';
-import { voiceRecognition, voiceSynthesis, TRIGGER_PHRASES } from '@/lib/voice';
-import { loadGoogleMapsScript, initMap } from '@/lib/maps';
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MapPin, Navigation, Clock, Share2, AlertTriangle, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import EmergencyButton from '@/components/safety/EmergencyButton';
-
-interface SafePlace {
-  id: string;
-  name: string;
-  type: string;
-  distance: number;
-  address?: string;
-  rating?: number;
-  lat: number;
-  lng: number;
-}
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 
 export default function Tracking() {
-  const { user } = useAuth();
-  const { toast } = useToast();
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [marker, setMarker] = useState<google.maps.Marker | null>(null);
+  const [watchId, setWatchId] = useState<number | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
   const [isTracking, setIsTracking] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [locationAddress, setLocationAddress] = useState<string>('');
-  const [safePlaces, setSafePlaces] = useState<SafePlace[]>([]);
-  const [error, setError] = useState('');
-  const [userInput, setUserInput] = useState('');
-  const [safetyScore, setSafetyScore] = useState(85);
-  const [textInput, setTextInput] = useState('');
-  const [permissionDenied, setPermissionDenied] = useState(false);
-  const watchId = useRef<number | null>(null);
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const locationRetries = useRef(0);
-  const [sessionId, setSessionId] = useState<string>('');
-
-  // Safety assessment based on various factors
-  const getSafetyStatus = () => {
-    if (safetyScore >= 80) return { status: 'safe', message: "You're in a safe area" };
-    if (safetyScore >= 60) return { status: 'moderate', message: "Exercise normal caution" };
-    return { status: 'unsafe', message: "Be careful, stay alert" };
-  };
-
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [trackingHistory, setTrackingHistory] = useState<any[]>([]);
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const geocoderRef = useRef<google.maps.Geocoder | null>(null);
+  
+  // Initialize Google Maps
   useEffect(() => {
-    if (user) {
-      ensureUserExists();
-    }
+    if (!mapRef.current) return;
     
-    // Always attempt to load the map library on component mount
-    loadGoogleMapsScript().catch(err => {
-      console.error("Failed to load Google Maps:", err);
-      setError("Failed to load map service. Please check your internet connection.");
-    });
-    
-    setSessionId(crypto.randomUUID());
-    
-    return () => {
-      stopTracking();
-    };
-  }, []);
-
-  const ensureUserExists = async () => {
-    if (!user) return;
-    
-    try {
-      // Check if user exists in public.users table
-      const { data: userData, error: fetchError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('id', user.id)
-        .maybeSingle();
+    const initMap = () => {
+      // Default location (San Francisco)
+      const defaultLocation = { lat: 37.7749, lng: -122.4194 };
       
-      // If user doesn't exist, create a record
-      if (fetchError || !userData) {
-        console.log('User record not found, creating...');
-        
-        const { error: insertError } = await supabase
-          .from('users')
-          .insert({
-            id: user.id,
-            email: user.email || '',
-            name: user.user_metadata?.name || 'User',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
-        
-        if (insertError) {
-          console.error('Error creating user record:', insertError);
-        }
-      }
-    } catch (err) {
-      console.error('Error ensuring user exists:', err);
-    }
-  };
-
-  useEffect(() => {
-    if (isTracking) {
-      startTracking();
-    } else {
-      stopTracking();
-    }
-
-    return () => {
-      stopTracking();
-    };
-  }, [isTracking]);
-
-  useEffect(() => {
-    if (currentLocation && isTracking) {
-      renderMap();
-      fetchSafePlaces();
-      reverseGeocode(currentLocation);
-      
-      // Save location to Supabase
-      if (user) {
-        saveLocationToDatabase(currentLocation);
-      }
-    }
-  }, [currentLocation, user]);
-
-  const saveLocationToDatabase = async (location: { lat: number; lng: number }) => {
-    if (!user) return;
-    
-    try {
-      const { error } = await supabase
-        .from('location_logs')
-        .insert({
-          user_id: user.id,
-          latitude: location.lat,
-          longitude: location.lng,
-          accuracy: 10, // Mock value for now
-          timestamp: new Date().toISOString()
-        });
-        
-      if (error) {
-        console.error("Error saving location:", error);
-      }
-    } catch (err) {
-      console.error("Failed to save location:", err);
-    }
-  };
-
-  const renderMap = async () => {
-    try {
-      if (!mapContainerRef.current || !currentLocation) return;
-      
-      await initMap(mapContainerRef, currentLocation, safePlaces);
-    } catch (err) {
-      console.error("Error rendering map:", err);
-      setError("Failed to display map. Please try again.");
-    }
-  };
-
-  const reverseGeocode = async (location: { lat: number; lng: number }) => {
-    try {
-      // Load Google Maps API if not already loaded
-      await loadGoogleMapsScript();
-      
-      const geocoder = new window.google.maps.Geocoder();
-      geocoder.geocode({ location }, (results, status) => {
-        if (status === "OK" && results && results.length > 0) {
-          setLocationAddress(results[0].formatted_address);
-        } else {
-          console.error("Geocoder failed:", status);
-        }
+      const mapInstance = new window.google.maps.Map(mapRef.current!, {
+        center: currentLocation || defaultLocation,
+        zoom: 15,
+        mapTypeControl: false,
+        fullscreenControl: false,
+        streetViewControl: false,
+        zoomControl: true,
       });
-    } catch (err) {
-      console.error("Error reverse geocoding:", err);
-    }
-  };
-
-  const startTracking = () => {
-    setUserInput('');
-    setError('');
-    setPermissionDenied(false);
-
-    if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser');
-      return;
-    }
-
-    // Start voice recognition if available
-    startVoiceRecognition();
-
-    // First get the current position
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        // Initial position update
-        handlePositionUpdate(position);
-        
-        // Then start watching position
-        watchId.current = navigator.geolocation.watchPosition(
-          handlePositionUpdate,
-          handlePositionError,
-          { 
-            enableHighAccuracy: true, 
-            maximumAge: 10000, 
-            timeout: 10000 
-          }
-        );
-        
-        locationRetries.current = 0;
-        voiceSynthesis.speak("Tracking started. I'll keep you safe.");
-        toast({
-          title: "Tracking Started",
-          description: "Your location is now being tracked for safety",
-        });
-      },
-      (error) => {
-        handlePositionError(error);
-        // If we fail to get the initial position, don't start watching
-        setIsTracking(false);
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-    );
-  };
-
-  const stopTracking = () => {
-    // Save tracking history
-    if (user && isTracking && sessionId) {
-      saveTrackingHistory();
-    }
-    
-    // Stop location tracking
-    if (watchId.current !== null) {
-      navigator.geolocation.clearWatch(watchId.current);
-      watchId.current = null;
-    }
-
-    // Stop voice recognition
-    if (isListening) {
-      voiceRecognition.stop();
-      setIsListening(false);
-    }
-    
-    if (isTracking) {
-      voiceSynthesis.speak("Tracking stopped. Stay safe.");
-      toast({
-        title: "Tracking Stopped",
-        description: "Location tracking has been turned off",
-      });
-    }
-  };
-
-  const saveTrackingHistory = async () => {
-    if (!user || !sessionId) return;
-    
-    try {
-      // Save session data to safety_logs
-      const { error } = await supabase
-        .from('safety_logs')
-        .insert({
-          user_id: user.id,
-          title: 'Location tracking session',
-          description: `Tracking session ${sessionId}`,
-          category: 'tracking',
-          severity: 'low',
-          status: 'resolved',
-          resolved_at: new Date().toISOString(),
-          location: currentLocation ? JSON.stringify(currentLocation) : null,
-          metadata: JSON.stringify({
-            session_id: sessionId,
-            duration_minutes: Math.floor((Date.now() - new Date(sessionId).getTime()) / 60000),
-            address: locationAddress || 'Unknown location'
-          })
-        });
-        
-      if (error) {
-        console.error("Error saving tracking history:", error);
-      } else {
-        console.log("Tracking history saved successfully");
-      }
-    } catch (err) {
-      console.error("Failed to save tracking history:", err);
-    }
-  };
-
-  const handlePositionUpdate = async (position: GeolocationPosition) => {
-    console.log("Got position update:", position.coords);
-    const location = {
-      lat: position.coords.latitude,
-      lng: position.coords.longitude,
-    };
-    
-    setCurrentLocation(location);
-    locationRetries.current = 0;
-
-    try {
-      if (user) {
-        saveLocationToDatabase(location);
-      }
-    } catch (err) {
-      console.error("Error updating location:", err);
-    }
-  };
-
-  const handlePositionError = (err: GeolocationPositionError) => {
-    console.error("Geolocation error:", err);
-    
-    locationRetries.current += 1;
-    
-    if (err.code === 1) { // PERMISSION_DENIED
-      setError("Location access denied. Please enable location services for this website.");
-      setPermissionDenied(true);
-      setIsTracking(false);
-      toast({
-        variant: "destructive",
-        title: "Location Permission Denied",
-        description: "Please enable location access in your browser settings to use tracking features.",
-      });
-    } else if (err.code === 2) { // POSITION_UNAVAILABLE
-      setError("Could not determine your location. Please check your device's GPS.");
-      if (locationRetries.current < 3) {
-        toast({
-          variant: "destructive",
-          title: "Location Unavailable",
-          description: "Trying again... Please ensure you have a clear GPS signal.",
-        });
-        
-        // Try again after a delay
-        setTimeout(() => {
-          navigator.geolocation.getCurrentPosition(
-            handlePositionUpdate,
-            handlePositionError,
-            { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-          );
-        }, 2000);
-      } else {
-        setIsTracking(false);
-        toast({
-          variant: "destructive",
-          title: "Location Unavailable",
-          description: "Could not determine your location after multiple attempts.",
-        });
-      }
-    } else if (err.code === 3) { // TIMEOUT
-      setError("Location request timed out. Please try again.");
-      if (locationRetries.current < 3) {
-        toast({
-          variant: "destructive",
-          title: "Location Timeout",
-          description: "Trying again... This may happen in areas with poor GPS signal.",
-        });
-        
-        // Try again after a delay
-        setTimeout(() => {
-          navigator.geolocation.getCurrentPosition(
-            handlePositionUpdate,
-            handlePositionError,
-            { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
-          );
-        }, 2000);
-      } else {
-        setIsTracking(false);
-        toast({
-          variant: "destructive",
-          title: "Location Timeout",
-          description: "Location requests are timing out repeatedly. Please try again later.",
-        });
-      }
-    }
-  };
-
-  const fetchSafePlaces = async () => {
-    if (!currentLocation) return;
-
-    setSafePlaces([]);
-    
-    try {
-      // Use Google Places API through Maps
-      await loadGoogleMapsScript();
       
-      if (window.google && window.google.maps && window.google.maps.places) {
-        const location = new window.google.maps.LatLng(currentLocation.lat, currentLocation.lng);
-        const placesService = new window.google.maps.places.PlacesService(document.createElement('div'));
-        
-        const request = {
-          location: location,
-          radius: 1500,
-          type: ['police', 'hospital', 'pharmacy', 'fire_station']
-        };
-        
-        placesService.nearbySearch(request, (results, status) => {
-          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
-            const places: SafePlace[] = results.map((place, index) => {
-              // Calculate distance (simplified version)
-              const placeLocation = place.geometry?.location;
-              const distance = placeLocation 
-                ? calculateDistance(
-                    currentLocation.lat, 
-                    currentLocation.lng, 
-                    placeLocation.lat(), 
-                    placeLocation.lng()
-                  ) 
-                : 0;
-                
-              return {
-                id: place.place_id || `place-${index}`,
-                name: place.name || 'Unknown Place',
-                type: place.types?.[0] || 'location',
-                distance: distance,
-                address: place.vicinity || '',
-                rating: place.rating,
-                lat: place.geometry?.location.lat() || 0,
-                lng: place.geometry?.location.lng() || 0
-              };
+      setMap(mapInstance);
+      
+      // Initialize geocoder
+      geocoderRef.current = new window.google.maps.Geocoder();
+      
+      // Try to get user's current location
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const pos = {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            };
+            
+            setCurrentLocation(pos);
+            mapInstance.setCenter(pos);
+            
+            // Create marker at current location
+            const newMarker = new window.google.maps.Marker({
+              position: pos,
+              map: mapInstance,
+              title: 'Your Location',
+              animation: window.google.maps.Animation.DROP,
+              icon: {
+                path: window.google.maps.SymbolPath.CIRCLE,
+                scale: 10,
+                fillColor: '#4285F4',
+                fillOpacity: 1,
+                strokeColor: '#ffffff',
+                strokeWeight: 2,
+              },
             });
             
-            setSafePlaces(places);
-          } else {
-            // Fallback to mock data if Google Places fails
-            const mockSafePlaces: SafePlace[] = [
-              {
-                id: "place1",
-                name: "City Police Station",
-                type: "Police",
-                distance: 0.7,
-                address: "123 Safety St",
-                lat: currentLocation.lat + 0.002,
-                lng: currentLocation.lng + 0.002
-              },
-              {
-                id: "place2",
-                name: "Downtown Hospital",
-                type: "Hospital",
-                distance: 1.2,
-                address: "456 Health Ave",
-                lat: currentLocation.lat - 0.003,
-                lng: currentLocation.lng + 0.001
-              },
-              {
-                id: "place3",
-                name: "24/7 Pharmacy",
-                type: "Pharmacy",
-                distance: 0.5,
-                address: "789 Medicine Rd",
-                lat: currentLocation.lat + 0.001,
-                lng: currentLocation.lng - 0.002
-              }
-            ];
+            setMarker(newMarker);
             
-            setSafePlaces(mockSafePlaces);
+            // Reverse geocode to get address
+            if (geocoderRef.current) {
+              geocoderRef.current.geocode({ location: pos }, (results, status) => {
+                if (status === 'OK' && results && results[0]) {
+                  const address = results[0].formatted_address;
+                  
+                  // Create info window with address
+                  const infoWindow = new window.google.maps.InfoWindow({
+                    content: `<div><strong>Your Location</strong><br/>${address}</div>`,
+                  });
+                  
+                  infoWindow.open(mapInstance, newMarker);
+                  
+                  // Close info window after 5 seconds
+                  setTimeout(() => {
+                    infoWindow.close();
+                  }, 5000);
+                }
+              });
+            }
+          },
+          (error) => {
+            console.error('Error getting location:', error);
+            toast({
+              variant: "destructive",
+              title: "Location Error",
+              description: `Could not get your location: ${error.message}`,
+            });
           }
-        });
-      } else {
-        // Fallback if Google Places isn't available
-        throw new Error("Google Places API not available");
+        );
       }
-    } catch (err) {
-      console.error("Error fetching safe places:", err);
-      
-      // Fallback to mock data
-      const mockSafePlaces: SafePlace[] = [
-        {
-          id: "place1",
-          name: "City Police Station",
-          type: "Police",
-          distance: 0.7,
-          address: "123 Safety St",
-          lat: currentLocation.lat + 0.002,
-          lng: currentLocation.lng + 0.002
-        },
-        {
-          id: "place2",
-          name: "Downtown Hospital",
-          type: "Hospital",
-          distance: 1.2,
-          address: "456 Health Ave",
-          lat: currentLocation.lat - 0.003,
-          lng: currentLocation.lng + 0.001
-        },
-        {
-          id: "place3",
-          name: "24/7 Pharmacy",
-          type: "Pharmacy",
-          distance: 0.5,
-          address: "789 Medicine Rd",
-          lat: currentLocation.lat + 0.001,
-          lng: currentLocation.lng - 0.002
-        }
-      ];
-      
-      setSafePlaces(mockSafePlaces);
-    }
-  };
-
-  // Calculate distance between two coordinates (Haversine formula)
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 3958.8; // Earth radius in miles
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  };
-
-  const startVoiceRecognition = () => {
-    if (isListening) return;
-
-    try {
-      voiceRecognition.start(
-        // On voice input
-        (text) => {
-          setUserInput(text);
-          handleUserInput(text);
-        },
-        // On trigger phrase
-        async (phrase) => {
-          handleEmergencyPhrase(phrase);
-        }
-      );
-      
-      setIsListening(true);
-      console.log("Voice recognition started");
-    } catch (err) {
-      console.error("Error starting voice recognition:", err);
-      toast({
-        variant: "destructive",
-        title: "Voice Recognition Error",
-        description: "Could not start voice recognition. Please try again.",
-      });
-    }
-  };
-
-  const toggleMicrophone = () => {
-    if (isListening) {
-      voiceRecognition.stop();
-      setIsListening(false);
-      toast({
-        title: "Microphone Off",
-        description: "Voice recognition disabled",
-      });
+    };
+    
+    // Check if Google Maps API is already loaded
+    if (window.google && window.google.maps) {
+      initMap();
     } else {
-      startVoiceRecognition();
-      toast({
-        title: "Microphone On",
-        description: "Voice recognition enabled",
-      });
+      // Load Google Maps API
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyDHwxSHPYP6w_OLTLfEfpFXZzWuQX4BwSI&libraries=places`;
+      script.async = true;
+      script.defer = true;
+      script.onload = initMap;
+      document.head.appendChild(script);
+      
+      return () => {
+        // Clean up script if component unmounts before script loads
+        document.head.removeChild(script);
+      };
     }
-  };
-
-  const handleUserInput = (input: string) => {
-    const text = input.toLowerCase();
-
-    // Handle various voice commands
-    if (text.includes('where am i')) {
-      if (locationAddress) {
-        speak(`You are at ${locationAddress}`);
-      } else if (currentLocation) {
-        speak(`You are at latitude ${currentLocation.lat.toFixed(4)} and longitude ${currentLocation.lng.toFixed(4)}`);
-      } else {
-        speak("I don't have your current location yet");
-      }
-    } else if (text.includes('safe places') || text.includes('nearby')) {
-      if (safePlaces.length > 0) {
-        speak(`There are ${safePlaces.length} safe places nearby. The closest is ${safePlaces[0].name}, which is ${safePlaces[0].distance.toFixed(1)} miles away.`);
-      } else {
-        speak("No safe places found nearby yet");
-      }
-    } else if (text.includes('am i safe')) {
-      const { status, message } = getSafetyStatus();
-      speak(message);
-    } else if (text.length > 3) {
-      // Acknowledge other inputs
-      speak(`I heard you say "${text}". How can I help you with your safety?`);
+  }, []);
+  
+  // Load tracking history
+  useEffect(() => {
+    if (user) {
+      loadTrackingHistory();
     }
-
-    // Save voice log to database
-    if (user && text.length > 3) {
-      saveVoiceLog(text);
-    }
-  };
-
-  const saveVoiceLog = async (text: string) => {
+  }, [user]);
+  
+  const loadTrackingHistory = async () => {
     if (!user) return;
     
     try {
-      const { error } = await supabase
-        .from('voice_logs')
-        .insert({
-          user_id: user.id,
-          text: text,
-          distress_detected: TRIGGER_PHRASES.some(phrase => text.toLowerCase().includes(phrase.toLowerCase())),
-          distress_level: TRIGGER_PHRASES.some(phrase => text.toLowerCase().includes(phrase.toLowerCase())) ? 0.8 : 0
-        });
-        
-      if (error) {
-        console.error("Error saving voice log:", error);
-      }
+      const { data, error } = await supabase
+        .from('tracking_sessions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      if (error) throw error;
+      
+      setTrackingHistory(data || []);
     } catch (err) {
-      console.error("Failed to save voice log:", err);
+      console.error('Error loading tracking history:', err);
     }
   };
-
-  const handleEmergencyPhrase = async (phrase: string) => {
-    if (!user) {
-      speak("You need to be logged in to send emergency alerts.");
+  
+  // Start tracking function
+  const startTracking = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast({
+        variant: "destructive",
+        title: "Not Supported",
+        description: "Geolocation is not supported by your browser",
+      });
       return;
     }
     
-    setIsProcessing(true);
+    if (isTracking) return;
     
-    speak(`I heard you say "${phrase}". Sending emergency alert now.`);
-    
-    if (currentLocation) {
+    // Create a new tracking session in the database
+    const createTrackingSession = async () => {
+      if (!user || !currentLocation) return null;
+      
       try {
-        // Insert directly to Supabase
-        const { error: alertError } = await supabase
-          .from('alerts')
+        const { data, error } = await supabase
+          .from('tracking_sessions')
           .insert({
             user_id: user.id,
-            type: 'voice',
-            latitude: currentLocation.lat,
-            longitude: currentLocation.lng,
-            message: `Emergency triggered by voice: "${phrase}"`,
+            start_location: `POINT(${currentLocation.lng} ${currentLocation.lat})`,
             status: 'active'
-          });
-            
-        if (alertError) throw alertError;
+          })
+          .select()
+          .single();
         
-        speak("Emergency alert sent to your contacts");
-        toast({
-          variant: "destructive",
-          title: "Emergency Alert Sent",
-          description: "Your emergency contacts have been notified of your situation",
-        });
+        if (error) throw error;
+        
+        return data.id;
       } catch (err) {
-        console.error("Error sending emergency alert:", err);
-        speak("Failed to send emergency alert. Please try again or use the emergency button");
+        console.error('Error creating tracking session:', err);
+        return null;
+      }
+    };
+    
+    // Start the actual tracking
+    const sessionPromise = createTrackingSession();
+    
+    const id = navigator.geolocation.watchPosition(
+      async (position) => {
+        const pos = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        
+        setCurrentLocation(pos);
+        
+        if (map) {
+          map.setCenter(pos);
+        }
+        
+        if (marker) {
+          marker.setPosition(pos);
+        }
+        
+        // Save location point to database
+        const sessionId = await sessionPromise;
+        if (sessionId && user) {
+          try {
+            await supabase
+              .from('location_points')
+              .insert({
+                session_id: sessionId,
+                user_id: user.id,
+                location: `POINT(${pos.lng} ${pos.lat})`,
+                accuracy: position.coords.accuracy,
+                timestamp: new Date().toISOString()
+              });
+          } catch (err) {
+            console.error('Error saving location point:', err);
+          }
+        }
+      },
+      (error) => {
+        console.error('Error tracking location:', error);
         toast({
           variant: "destructive",
-          title: "Alert Failed",
-          description: "Could not send emergency alert. Please try again.",
+          title: "Tracking Error",
+          description: `Could not track your location: ${error.message}`,
         });
+        stopTracking();
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 5000
       }
-    } else {
-      speak("Cannot send alert without your location. Please ensure location services are enabled.");
+    );
+    
+    setWatchId(id);
+    setIsTracking(true);
+    
+    toast({
+      title: "Tracking Started",
+      description: "Your location is now being tracked in real-time",
+    });
+  }, [map, marker, isTracking, currentLocation, user]);
+  
+  // Stop tracking function
+  const stopTracking = useCallback(async () => {
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      setWatchId(null);
+      setIsTracking(false);
+      
+      // Update tracking session status in database
+      if (user) {
+        try {
+          const { data, error } = await supabase
+            .from('tracking_sessions')
+            .update({ status: 'completed', end_time: new Date().toISOString() })
+            .eq('user_id', user.id)
+            .eq('status', 'active');
+          
+          if (error) throw error;
+          
+          // Reload tracking history
+          loadTrackingHistory();
+        } catch (err) {
+          console.error('Error updating tracking session:', err);
+        }
+      }
+      
       toast({
-        variant: "destructive",
-        title: "Location Required",
-        description: "Could not get your location to send an alert",
+        title: "Tracking Stopped",
+        description: "Your location is no longer being tracked",
       });
     }
-    
-    setIsProcessing(false);
-  };
-
-  const handleTextInputSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!textInput.trim()) return;
-    
-    // Check if the text input is an emergency phrase
-    const isEmergencyPhrase = TRIGGER_PHRASES.some(phrase => 
-      textInput.toLowerCase().includes(phrase)
-    );
-    
-    if (isEmergencyPhrase) {
-      const matchedPhrase = TRIGGER_PHRASES.find(phrase => 
-        textInput.toLowerCase().includes(phrase)
-      );
-      if (matchedPhrase) {
-        handleEmergencyPhrase(matchedPhrase);
+  }, [watchId, user]);
+  
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
       }
-    } else {
-      handleUserInput(textInput);
-    }
+    };
+  }, [watchId]);
+  
+  // Search for a location
+  const searchLocation = () => {
+    if (!searchQuery.trim() || !map || !geocoderRef.current) return;
     
-    setTextInput('');
-  };
-
-  const speak = (text: string) => {
-    setIsSpeaking(true);
-    voiceSynthesis.speak(text);
+    setIsLoading(true);
     
-    // Approximate time to finish speaking
-    const speechTime = Math.max(2000, text.length * 80);
-    setTimeout(() => setIsSpeaking(false), speechTime);
+    geocoderRef.current.geocode({ address: searchQuery }, (results, status) => {
+      setIsLoading(false);
+      
+      if (status === 'OK' && results && results[0]) {
+        const location = results[0].geometry.location;
+        
+        map.setCenter(location);
+        map.setZoom(15);
+        
+        // Create a new marker for the searched location
+        if (marker) {
+          marker.setMap(null);
+        }
+        
+        const newMarker = new window.google.maps.Marker({
+          position: location,
+          map: map,
+          title: results[0].formatted_address,
+          animation: window.google.maps.Animation.DROP,
+        });
+        
+        setMarker(newMarker);
+        
+        // Create info window with address
+        const infoWindow = new window.google.maps.InfoWindow({
+          content: `<div><strong>${results[0].formatted_address}</strong></div>`,
+        });
+        
+        infoWindow.open(map, newMarker);
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Search Error",
+          description: "Could not find that location. Please try again.",
+        });
+      }
+    });
   };
-
-  const { status: safetyStatus, message: safetyMessage } = getSafetyStatus();
-
-  if (!user) {
-    return (
-      <div className="p-4 md:p-6 max-w-4xl mx-auto">
-        <Card>
-          <CardContent className="py-10 text-center">
-            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
-            <p className="text-muted-foreground">
-              You need to be logged in to use tracking features.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
+  
+  // Format date for display
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  };
+  
   return (
-    <div className="p-4 md:p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex flex-wrap justify-between items-center gap-4">
-          <h1 className="text-2xl font-bold flex items-center">
-            <MapPin className="mr-2 h-6 w-6 text-primary" />
-            Safety Tracking
-          </h1>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={isTracking ? "destructive" : "default"}
-              onClick={() => setIsTracking(!isTracking)}
-              className="shadow-md"
-              disabled={permissionDenied}
-            >
-              {isTracking ? "Stop Tracking" : "Start Tracking"}
-            </Button>
-            {isTracking && (
-              <Button
-                variant="outline"
-                onClick={toggleMicrophone}
-                className={`${isListening ? 'bg-primary/10' : ''}`}
-              >
-                {isListening ? <MicOff className="h-4 w-4 mr-2" /> : <Mic className="h-4 w-4 mr-2" />}
-                {isListening ? 'Mute' : 'Unmute'}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {error && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        {isTracking ? (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 space-y-6">
-                {/* Map container */}
-                <Card className="overflow-hidden">
+    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6 flex items-center">
+        <MapPin className="mr-2 h-6 w-6 text-primary" />
+        Location Tracking
+      </h1>
+      
+      <Tabs defaultValue="map">
+        <TabsList className="mb-4">
+          <TabsTrigger value="map">Map View</TabsTrigger>
+          <TabsTrigger value="history">Tracking History</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="map">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card className="md:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle>Live Location</CardTitle>
+                <CardDescription>
+                  View and track your current location
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="relative">
                   <div 
-                    ref={mapContainerRef} 
-                    className="h-[350px] w-full bg-accent rounded-lg"
-                  >
-                    {!currentLocation && (
-                      <div className="h-full flex items-center justify-center text-muted-foreground">
-                        Getting your location...
-                      </div>
-                    )}
-                  </div>
-                </Card>
-
-                {/* Safety Status Card */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center justify-between">
-                      <span>Safety Status</span>
-                      <Badge 
-                        variant={safetyStatus === 'safe' ? 'default' : safetyStatus === 'moderate' ? 'outline' : 'destructive'}
-                        className="ml-2"
+                    ref={mapRef} 
+                    className="w-full h-[400px] rounded-md overflow-hidden border"
+                  ></div>
+                  
+                  <div className="absolute top-4 left-4 right-4">
+                    <div className="flex gap-2 bg-background/90 backdrop-blur-sm p-2 rounded-md border shadow-sm">
+                      <Input
+                        placeholder="Search for a location..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && searchLocation()}
+                        className="flex-1"
+                      />
+                      <Button 
+                        onClick={searchLocation} 
+                        disabled={isLoading}
+                        size="icon"
                       >
-                        {safetyStatus === 'safe' ? 'Safe' : safetyStatus === 'moderate' ? 'Normal Caution' : 'Be Alert'}
-                      </Badge>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between text-sm">
-                        <span>Safety Score</span>
-                        <span className="font-medium">{safetyScore}%</span>
-                      </div>
-                      <Progress value={safetyScore} className="h-2" />
-                      <p className="text-sm text-muted-foreground">
-                        {safetyMessage}
-                      </p>
-                      
-                      {currentLocation && (
-                        <p className="text-xs text-muted-foreground mt-4">
-                          Current Location: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
-                        </p>
-                      )}
+                        <Search className="h-4 w-4" />
+                      </Button>
                     </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="space-y-6">
-                {/* Safe Places Card */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center">
-                      <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
-                      Nearby Safe Places
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {safePlaces.length > 0 ? (
-                      <div className="space-y-3 max-h-[200px] overflow-y-auto">
-                        {safePlaces.slice(0, 5).map((place) => (
-                          <div key={place.id} className="p-2 rounded-md bg-accent/50">
-                            <div className="font-medium">{place.name}</div>
-                            <div className="text-sm text-muted-foreground">{place.type}</div>
-                            <div className="text-sm">{place.distance.toFixed(1)} miles away</div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Loading safe places nearby...
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Voice Interface */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center">
-                      <Mic className="mr-2 h-4 w-4" />
-                      Voice Assistant
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div className="p-3 rounded-md bg-accent/50 min-h-[100px] text-sm">
-                        {userInput ? (
-                          <div className="space-y-2">
-                            <p className="font-medium">I heard you say:</p>
-                            <p className="italic">{userInput}</p>
-                          </div>
-                        ) : (
-                          <p className="text-muted-foreground">
-                            {isListening ? "I'm listening..." : "Voice recognition is off"}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-sm font-medium">Say or type:</p>
-                        <ul className="text-xs space-y-1 text-muted-foreground">
-                          <li>"Where am I?" - Get current location</li>
-                          <li>"Are there safe places nearby?" - List safe locations</li>
-                          <li>"Am I safe?" - Check safety status</li>
-                          <li className="text-red-400 font-medium">Emergency trigger phrases will alert your contacts</li>
-                        </ul>
-                      </div>
-
-                      <form onSubmit={handleTextInputSubmit} className="flex gap-2">
-                        <input
-                          type="text"
-                          value={textInput}
-                          onChange={(e) => setTextInput(e.target.value)}
-                          placeholder="Type a message..."
-                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                        <Button type="submit" size="sm">Send</Button>
-                      </form>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <EmergencyButton className="w-full" />
-              </div>
-            </div>
-
-            {/* Floating emergency button for mobile */}
-            <div className="lg:hidden fixed bottom-6 right-6">
-              <EmergencyButton />
-            </div>
-          </>
-        ) : (
-          <Card className="p-6 text-center">
-            <div className="flex flex-col items-center justify-center space-y-4 py-12">
-              <div className="rounded-full bg-primary/10 p-6">
-                <MapPin className="h-12 w-12 text-primary" />
-              </div>
-              <h2 className="text-xl font-semibold">Start Tracking for Safety</h2>
-              <p className="text-muted-foreground max-w-md mx-auto">
-                Enable location tracking to get safety alerts, find nearby safe places, and use voice commands for help.
-              </p>
-              {permissionDenied ? (
-                <Alert variant="destructive" className="max-w-md mx-auto mt-4">
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Location Access Required</AlertTitle>
-                  <AlertDescription>
-                    Please enable location access in your browser settings to use tracking features.
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <Button 
-                  onClick={() => setIsTracking(true)}
-                  size="lg"
-                  className="mt-2"
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter className="flex justify-between">
+                <Button
+                  variant={isTracking ? "destructive" : "default"}
+                  onClick={isTracking ? stopTracking : startTracking}
+                  className="flex items-center gap-2"
                 >
-                  Start Tracking
+                  {isTracking ? (
+                    <>
+                      <AlertTriangle className="h-4 w-4" />
+                      Stop Tracking
+                    </>
+                  ) : (
+                    <>
+                      <Navigation className="h-4 w-4" />
+                      Start Tracking
+                    </>
+                  )}
                 </Button>
+                
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (currentLocation) {
+                      const url = `https://www.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`;
+                      navigator.clipboard.writeText(url);
+                      toast({
+                        title: "Location Copied",
+                        description: "Location link copied to clipboard",
+                      });
+                    }
+                  }}
+                  disabled={!currentLocation}
+                  className="flex items-center gap-2"
+                >
+                  <Share2 className="h-4 w-4" />
+                  Share Location
+                </Button>
+              </CardFooter>
+            </Card>
+            
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle>Tracking Options</CardTitle>
+                <CardDescription>
+                  Configure your tracking preferences
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="high-accuracy">High Accuracy</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Use GPS for precise location
+                    </p>
+                  </div>
+                  <Switch id="high-accuracy" defaultChecked />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="background-tracking">Background Tracking</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Continue tracking when app is closed
+                    </p>
+                  </div>
+                  <Switch id="background-tracking" />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="share-contacts">Share with Contacts</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Allow trusted contacts to see your location
+                    </p>
+                  </div>
+                  <Switch id="share-contacts" />
+                </div>
+              </CardContent>
+              <CardFooter>
+                <p className="text-xs text-muted-foreground">
+                  Your location data is encrypted and only shared with your explicit permission.
+                </p>
+              </CardFooter>
+            </Card>
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="history">
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Tracking Sessions</CardTitle>
+              <CardDescription>
+                View your recent location tracking activity
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {trackingHistory.length > 0 ? (
+                <div className="space-y-4">
+                  {trackingHistory.map((session) => (
+                    <div key={session.id} className="flex items-center justify-between border-b pb-4">
+                      <div>
+                        <h3 className="font-medium">
+                          Tracking Session {session.id.substring(0, 8)}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          Started: {formatDate(session.created_at)}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Status: <span className={session.status === 'active' ? 'text-green-500' : ''}>{session.status}</span>
+                        </p>
+                      </div>
+                      <Button variant="outline" size="sm" className="flex items-center gap-2">
+                        <Clock className="h-4 w-4" />
+                        View Details
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-medium text-lg mb-2">No Tracking History</h3>
+                  <p className="text-muted-foreground">
+                    You haven't started any tracking sessions yet.
+                  </p>
+                </div>
               )}
-            </div>
+            </CardContent>
           </Card>
-        )}
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
