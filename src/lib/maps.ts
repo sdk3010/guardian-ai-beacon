@@ -36,9 +36,9 @@ export const initMap = async (
     rating?: number;
     lat: number;
     lng: number;
-  }>
-): Promise<void> => {
-  if (!mapContainerRef.current || !currentLocation) return;
+  }> = []
+): Promise<google.maps.Map | null> => {
+  if (!mapContainerRef.current || !currentLocation) return null;
 
   try {
     await loadGoogleMapsScript();
@@ -116,6 +116,8 @@ export const initMap = async (
         placeWindow.open(map, marker);
       });
     });
+    
+    return map;
   } catch (err) {
     console.error("Error initializing map:", err);
     throw new Error("Failed to load map. Please try again.");

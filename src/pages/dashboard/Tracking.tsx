@@ -1,3 +1,4 @@
+
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MapPin, Navigation, Clock, Share2, AlertTriangle, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from '@/context/AuthContext';
-import { TrackingService, type TrackingSession } from '@/services/TrackingService';
+import { TrackingService, type TrackingSession, type LocationPoint } from '@/services/TrackingService';
+import { loadGoogleMapsScript } from '@/lib/maps';
 
 export default function Tracking() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -19,7 +21,7 @@ export default function Tracking() {
   const [isTracking, setIsTracking] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [trackingHistory, setTrackingHistory] = useState<any[]>([]);
+  const [trackingHistory, setTrackingHistory] = useState<TrackingSession[]>([]);
   const { toast } = useToast();
   const { user } = useAuth();
   const geocoderRef = useRef<google.maps.Geocoder | null>(null);
@@ -29,104 +31,100 @@ export default function Tracking() {
   useEffect(() => {
     if (!mapRef.current) return;
     
-    const initMap = () => {
-      // Default location (San Francisco)
-      const defaultLocation = { lat: 37.7749, lng: -122.4194 };
-      
-      const mapInstance = new window.google.maps.Map(mapRef.current!, {
-        center: currentLocation || defaultLocation,
-        zoom: 15,
-        mapTypeControl: false,
-        fullscreenControl: false,
-        streetViewControl: false,
-        zoomControl: true,
-      });
-      
-      setMap(mapInstance);
-      
-      // Initialize geocoder
-      geocoderRef.current = new window.google.maps.Geocoder();
-      
-      // Try to get user's current location
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const pos = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            };
-            
-            setCurrentLocation(pos);
-            mapInstance.setCenter(pos);
-            
-            // Create marker at current location
-            const newMarker = new window.google.maps.Marker({
-              position: pos,
-              map: mapInstance,
-              title: 'Your Location',
-              animation: window.google.maps.Animation.DROP,
-              icon: {
-                path: window.google.maps.SymbolPath.CIRCLE,
-                scale: 10,
-                fillColor: '#4285F4',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWeight: 2,
-              },
-            });
-            
-            setMarker(newMarker);
-            
-            // Reverse geocode to get address
-            if (geocoderRef.current) {
-              geocoderRef.current.geocode({ location: pos }, (results, status) => {
-                if (status === 'OK' && results && results[0]) {
-                  const address = results[0].formatted_address;
-                  
-                  // Create info window with address
-                  const infoWindow = new window.google.maps.InfoWindow({
-                    content: `<div><strong>Your Location</strong><br/>${address}</div>`,
-                  });
-                  
-                  infoWindow.open(mapInstance, newMarker);
-                  
-                  // Close info window after 5 seconds
-                  setTimeout(() => {
-                    infoWindow.close();
-                  }, 5000);
-                }
+    const initMap = async () => {
+      try {
+        // Load Google Maps API
+        await loadGoogleMapsScript();
+        
+        // Default location (San Francisco)
+        const defaultLocation = { lat: 37.7749, lng: -122.4194 };
+        
+        const mapInstance = new window.google.maps.Map(mapRef.current!, {
+          center: currentLocation || defaultLocation,
+          zoom: 15,
+          mapTypeControl: false,
+          fullscreenControl: false,
+          streetViewControl: false,
+          zoomControl: true,
+        });
+        
+        setMap(mapInstance);
+        
+        // Initialize geocoder
+        geocoderRef.current = new window.google.maps.Geocoder();
+        
+        // Try to get user's current location
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              const pos = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+              };
+              
+              setCurrentLocation(pos);
+              mapInstance.setCenter(pos);
+              
+              // Create marker at current location
+              const newMarker = new window.google.maps.Marker({
+                position: pos,
+                map: mapInstance,
+                title: 'Your Location',
+                animation: window.google.maps.Animation.DROP,
+                icon: {
+                  path: window.google.maps.SymbolPath.CIRCLE,
+                  scale: 10,
+                  fillColor: '#4285F4',
+                  fillOpacity: 1,
+                  strokeColor: '#ffffff',
+                  strokeWeight: 2,
+                },
+              });
+              
+              setMarker(newMarker);
+              
+              // Reverse geocode to get address
+              if (geocoderRef.current) {
+                geocoderRef.current.geocode({ location: pos }, (results, status) => {
+                  if (status === 'OK' && results && results[0]) {
+                    const address = results[0].formatted_address;
+                    
+                    // Create info window with address
+                    const infoWindow = new window.google.maps.InfoWindow({
+                      content: `<div><strong>Your Location</strong><br/>${address}</div>`,
+                    });
+                    
+                    infoWindow.open(mapInstance, newMarker);
+                    
+                    // Close info window after 5 seconds
+                    setTimeout(() => {
+                      infoWindow.close();
+                    }, 5000);
+                  }
+                });
+              }
+            },
+            (error) => {
+              console.error('Error getting location:', error);
+              toast({
+                variant: "destructive",
+                title: "Location Error",
+                description: `Could not get your location: ${error.message}`,
               });
             }
-          },
-          (error) => {
-            console.error('Error getting location:', error);
-            toast({
-              variant: "destructive",
-              title: "Location Error",
-              description: `Could not get your location: ${error.message}`,
-            });
-          }
-        );
+          );
+        }
+      } catch (error) {
+        console.error('Error initializing map:', error);
+        toast({
+          variant: "destructive",
+          title: "Map Error",
+          description: "Could not initialize map. Please try refreshing the page.",
+        });
       }
     };
     
-    // Check if Google Maps API is already loaded
-    if (window.google && window.google.maps) {
-      initMap();
-    } else {
-      // Load Google Maps API
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyDHwxSHPYP6w_OLTLfEfpFXZzWuQX4BwSI&libraries=places`;
-      script.async = true;
-      script.defer = true;
-      script.onload = initMap;
-      document.head.appendChild(script);
-      
-      return () => {
-        // Clean up script if component unmounts before script loads
-        document.head.removeChild(script);
-      };
-    }
+    initMap();
   }, []);
   
   // Load tracking history
@@ -140,18 +138,15 @@ export default function Tracking() {
     if (!user) return;
     
     try {
-      const { data, error } = await supabase
-        .from('tracking_sessions')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-      
-      if (error) throw error;
-      
-      setTrackingHistory(data || []);
+      const history = await TrackingService.getTrackingHistory(user.id);
+      setTrackingHistory(history);
     } catch (err) {
       console.error('Error loading tracking history:', err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load tracking history. Please try again.",
+      });
     }
   };
   
@@ -466,7 +461,7 @@ export default function Tracking() {
                           Tracking Session {session.id.substring(0, 8)}
                         </h3>
                         <p className="text-sm text-muted-foreground">
-                          Started: {formatDate(session.created_at)}
+                          Started: {formatDate(session.start_time)}
                         </p>
                         <p className="text-sm text-muted-foreground">
                           Status: <span className={session.status === 'active' ? 'text-green-500' : ''}>{session.status}</span>
