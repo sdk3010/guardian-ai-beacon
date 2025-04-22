@@ -10,6 +10,18 @@ declare interface Window {
       SymbolPath: {
         CIRCLE: number;
       };
+      Geocoder: any;
+      places: {
+        PlacesService: any;
+        PlacesServiceStatus: {
+          OK: string;
+        };
+      };
+      geometry: {
+        spherical: {
+          computeDistanceBetween: (from: any, to: any) => number;
+        }
+      }
     };
   };
 }

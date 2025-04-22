@@ -19,11 +19,11 @@ export const TRIGGER_PHRASES = [
 class VoiceRecognition {
   recognition: any = null;
   isListening: boolean = false;
-  confidenceThreshold: number = 0.6; // Only accept results with this confidence or higher
-  minWordCount: number = 3; // Only respond to phrases with at least this many words
+  confidenceThreshold: number = 0.5; // Lower threshold to improve recognition
+  minWordCount: number = 2; // Lower word count to improve recognition
   inactivityTimeout: number | null = null;
   lastResultTime: number = 0;
-  inactivityTimeoutMs: number = 5000; // Stop listening after 5 seconds of inactivity
+  inactivityTimeoutMs: number = 10000; // Longer timeout for better recognition
 
   constructor() {
     const windowWithSpeech = window as IWindow;
@@ -53,7 +53,7 @@ class VoiceRecognition {
         const transcript = event.results[i][0].transcript.toLowerCase().trim();
         const confidence = event.results[i][0].confidence;
         
-        // Apply filters to reduce false positives
+        // Apply filters to reduce false positives but with lower threshold
         if (confidence < this.confidenceThreshold) {
           console.log(`Ignored low confidence result (${confidence.toFixed(2)}): ${transcript}`);
           continue;
@@ -71,8 +71,7 @@ class VoiceRecognition {
         // Check for trigger phrases with additional validation
         if (onTriggerPhrase) {
           for (const phrase of TRIGGER_PHRASES) {
-            // More strict matching to reduce false positives
-            if (transcript.includes(phrase) && confidence > 0.75) {
+            if (transcript.includes(phrase)) {
               console.log(`Trigger phrase detected: "${phrase}"`);
               onTriggerPhrase(phrase);
               break;
@@ -89,15 +88,40 @@ class VoiceRecognition {
       console.error('Speech recognition error', event.error);
       if (event.error === 'not-allowed') {
         console.error('Microphone access denied');
+      } else if (event.error === 'no-speech') {
+        // Just log and continue for no-speech errors
+        console.log('No speech detected');
+        this.resetInactivityTimeout();
+      } else {
+        // For other errors, try to restart after a delay
+        setTimeout(() => {
+          if (this.isListening) {
+            this.stop();
+            this.start(onResult, onTriggerPhrase);
+          }
+        }, 1000);
       }
     };
 
-    this.recognition.start();
-    this.isListening = true;
-    this.lastResultTime = Date.now();
-    this.resetInactivityTimeout();
-    
-    console.log('Voice recognition started');
+    // Handle potential recognition end
+    this.recognition.onend = () => {
+      console.log('Speech recognition ended');
+      // If we're still supposed to be listening, restart
+      if (this.isListening) {
+        console.log('Restarting speech recognition...');
+        this.recognition.start();
+      }
+    };
+
+    try {
+      this.recognition.start();
+      this.isListening = true;
+      this.lastResultTime = Date.now();
+      this.resetInactivityTimeout();
+      console.log('Voice recognition started');
+    } catch (error) {
+      console.error('Failed to start voice recognition:', error);
+    }
   }
 
   stop() {
@@ -108,7 +132,12 @@ class VoiceRecognition {
       this.inactivityTimeout = null;
     }
     
-    this.recognition.stop();
+    try {
+      this.recognition.stop();
+    } catch (error) {
+      console.error('Error stopping recognition:', error);
+    }
+    
     this.isListening = false;
     console.log('Voice recognition stopped');
   }
@@ -168,7 +197,7 @@ class WebSpeechSynthesis {
 
 // Text-to-Speech using ElevenLabs API
 class ElevenLabsSynthesis {
-  async speak(text: string, voiceId?: string) {
+  async speak(text: string, voice?: string) {
     try {
       if (!text) return;
       
@@ -179,7 +208,7 @@ class ElevenLabsSynthesis {
         },
         body: JSON.stringify({ 
           text,
-          voiceId: voiceId || 'EXAVITQu4vr4xnSDxMaL' // Default to Sarah voice
+          voice: voice || 'EXAVITQu4vr4xnSDxMaL' // Default to Sarah voice
         }),
       });
       
@@ -189,15 +218,21 @@ class ElevenLabsSynthesis {
       
       const data = await response.json();
       
-      // Play the audio
-      const audio = new Audio(data.audioUrl);
-      audio.play();
+      if (!data.audioContent) {
+        throw new Error('No audio content returned');
+      }
+      
+      // Convert base64 to audio
+      const audioSrc = `data:audio/mpeg;base64,${data.audioContent}`;
+      const audio = new Audio(audioSrc);
+      await audio.play();
       
       return audio;
     } catch (error) {
       console.error('Error using ElevenLabs TTS:', error);
       // Fallback to browser TTS
-      webSpeechSynthesis.speak(text);
+      const webSpeech = new WebSpeechSynthesis();
+      webSpeech.speak(text);
     }
   }
 }

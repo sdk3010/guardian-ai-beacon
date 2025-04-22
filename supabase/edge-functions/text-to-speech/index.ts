@@ -27,6 +27,8 @@ serve(async (req) => {
     }
 
     const voiceId = voice || 'EXAVITQu4vr4xnSDxMaL'; // Sarah voice by default
+    console.log(`Generating speech for text: "${text.substring(0, 50)}..." with voice ${voiceId}`);
+
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`, {
       method: 'POST',
       headers: {
@@ -47,7 +49,7 @@ serve(async (req) => {
     if (!response.ok) {
       const error = await response.text();
       console.error("ElevenLabs API error:", error);
-      throw new Error('Failed to generate speech');
+      throw new Error(`Failed to generate speech: ${error}`);
     }
 
     // Convert audio buffer to base64
@@ -55,6 +57,8 @@ serve(async (req) => {
     const base64Audio = btoa(
       String.fromCharCode(...new Uint8Array(arrayBuffer))
     );
+
+    console.log(`Successfully generated speech, returning ${base64Audio.length} bytes of base64 audio`);
 
     return new Response(
       JSON.stringify({ audioContent: base64Audio }),

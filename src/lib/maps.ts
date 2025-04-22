@@ -12,7 +12,7 @@ export const loadGoogleMapsScript = (): Promise<void> => {
     
     const script = document.createElement('script');
     script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry&loading=async`;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();

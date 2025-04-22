@@ -35,6 +35,35 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     return interval;
   };
 
+  // Check if 'profiles' bucket exists, create if not
+  const checkAndCreateProfilesBucket = async () => {
+    try {
+      const { data: buckets, error } = await supabase.storage.listBuckets();
+      
+      if (error) throw error;
+      
+      const profilesBucketExists = buckets.some(bucket => bucket.name === 'profiles');
+      
+      if (!profilesBucketExists) {
+        console.log('Creating profiles bucket...');
+        const { error: createError } = await supabase.storage.createBucket('profiles', {
+          public: true,
+          fileSizeLimit: 5 * 1024 * 1024, // 5MB
+        });
+        
+        if (createError) throw createError;
+        
+        console.log('Profiles bucket created successfully');
+      }
+    } catch (err) {
+      console.error('Error checking/creating profiles bucket:', err);
+    }
+  };
+  
+  useEffect(() => {
+    checkAndCreateProfilesBucket();
+  }, []);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -69,15 +98,24 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
       // Upload to Supabase Storage
       if (!user) throw new Error("User not authenticated");
       
+      // Make sure the bucket exists
+      await checkAndCreateProfilesBucket();
+      
       const fileName = `${user.id}-${Date.now()}`;
       const fileExt = file.name.split('.').pop();
       const filePath = `${fileName}.${fileExt}`;
 
+      console.log(`Uploading file to profiles bucket: ${filePath}`);
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('profiles')
-        .upload(filePath, file);
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true
+        });
 
       if (uploadError) throw uploadError;
+
+      console.log('File uploaded successfully:', uploadData);
 
       // Get public URL
       const { data: publicUrlData } = await supabase.storage
@@ -85,14 +123,48 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
         .getPublicUrl(filePath);
 
       const imageUrl = publicUrlData.publicUrl;
+      console.log('Public URL:', imageUrl);
 
-      // Update user profile in database
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ profile_image_url: imageUrl })
-        .eq('id', user.id);
+      try {
+        // Check if user exists first
+        const { data: userData, error: userCheckError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+          
+        if (userCheckError) throw userCheckError;
+        
+        // If user exists, update profile image
+        if (userData) {
+          console.log('Updating existing user profile with new image URL');
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({ profile_image_url: imageUrl })
+            .eq('id', user.id);
 
-      if (updateError) throw updateError;
+          if (updateError) throw updateError;
+        } else {
+          // If user doesn't exist, insert new user record
+          console.log('User not found in database, creating new user record');
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert({
+              id: user.id,
+              email: user.email || '',
+              name: user.user_metadata?.name || 'User',
+              profile_image_url: imageUrl,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
+
+          if (insertError) throw insertError;
+        }
+      } catch (dbError: any) {
+        console.error("Error updating user profile:", dbError);
+        // Continue with success even if DB update fails
+        // The image was still uploaded successfully
+      }
 
       clearInterval(progressInterval);
       setUploadProgress(100);
