@@ -293,6 +293,44 @@ export type Database = {
           },
         ]
       }
+      location_points: {
+        Row: {
+          accuracy: number | null
+          created_at: string | null
+          id: string
+          location: Json
+          session_id: string
+          timestamp: string
+          user_id: string
+        }
+        Insert: {
+          accuracy?: number | null
+          created_at?: string | null
+          id?: string
+          location: Json
+          session_id: string
+          timestamp?: string
+          user_id: string
+        }
+        Update: {
+          accuracy?: number | null
+          created_at?: string | null
+          id?: string
+          location?: Json
+          session_id?: string
+          timestamp?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_points_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "tracking_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       safe_zones: {
         Row: {
           created_at: string | null
@@ -392,6 +430,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      tracking_sessions: {
+        Row: {
+          created_at: string | null
+          end_location: Json | null
+          end_time: string | null
+          id: string
+          start_location: Json | null
+          start_time: string
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          end_location?: Json | null
+          end_time?: string | null
+          id?: string
+          start_location?: Json | null
+          start_time?: string
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          end_location?: Json | null
+          end_time?: string | null
+          id?: string
+          start_location?: Json | null
+          start_time?: string
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       user_settings: {
         Row: {

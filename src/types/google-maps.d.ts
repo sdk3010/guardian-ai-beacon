@@ -7,17 +7,21 @@ declare interface Window {
       InfoWindow: any;
       LatLng: any;
       NavigationControl: any;
+      Animation: {
+        DROP: number;
+        BOUNCE: number;
+      };
       SymbolPath: {
         CIRCLE: number;
       };
-      Geocoder: any; // Added missing Geocoder type
+      Geocoder: any;
       places: {
         PlacesService: any;
         PlacesServiceStatus: {
           OK: string;
         };
-        AutocompleteService: any; // Added for completeness
-        SearchBox: any; // Added for completeness
+        AutocompleteService: any;
+        SearchBox: any;
       };
       geometry: {
         spherical: {

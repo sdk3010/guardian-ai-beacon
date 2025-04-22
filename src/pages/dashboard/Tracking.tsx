@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MapPin, Navigation, Clock, Share2, AlertTriangle, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { TrackingService, type TrackingSession } from '@/services/TrackingService';
 
 export default function Tracking() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -23,6 +23,7 @@ export default function Tracking() {
   const { toast } = useToast();
   const { user } = useAuth();
   const geocoderRef = useRef<google.maps.Geocoder | null>(null);
+  const [trackingSession, setTrackingSession] = useState<TrackingSession | null>(null);
   
   // Initialize Google Maps
   useEffect(() => {
@@ -154,146 +155,106 @@ export default function Tracking() {
     }
   };
   
-  // Start tracking function
-  const startTracking = useCallback(() => {
-    if (!navigator.geolocation) {
+  const handleStartTracking = async () => {
+    if (!user || !currentLocation) return;
+
+    try {
+      const session = await TrackingService.createSession(user.id, currentLocation);
+      setTrackingSession(session);
+      setIsTracking(true);
+      
+      // Start watching position
+      const id = navigator.geolocation.watchPosition(
+        handlePositionUpdate,
+        handlePositionError,
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
+        }
+      );
+      
+      setWatchId(id);
+      
+      toast({
+        title: "Tracking Started",
+        description: "Your location is now being tracked in real-time",
+      });
+    } catch (error) {
+      console.error('Error starting tracking:', error);
       toast({
         variant: "destructive",
-        title: "Not Supported",
-        description: "Geolocation is not supported by your browser",
+        title: "Error",
+        description: "Could not start tracking. Please try again.",
       });
-      return;
     }
-    
-    if (isTracking) return;
-    
-    // Create a new tracking session in the database
-    const createTrackingSession = async () => {
-      if (!user || !currentLocation) return null;
+  };
+
+  const handleStopTracking = async () => {
+    if (!watchId || !trackingSession || !currentLocation) return;
+
+    try {
+      await TrackingService.endSession(trackingSession.id, currentLocation);
       
-      try {
-        const { data, error } = await supabase
-          .from('tracking_sessions')
-          .insert({
-            user_id: user.id,
-            start_location: `POINT(${currentLocation.lng} ${currentLocation.lat})`,
-            status: 'active'
-          })
-          .select()
-          .single();
-        
-        if (error) throw error;
-        
-        return data.id;
-      } catch (err) {
-        console.error('Error creating tracking session:', err);
-        return null;
-      }
-    };
-    
-    // Start the actual tracking
-    const sessionPromise = createTrackingSession();
-    
-    const id = navigator.geolocation.watchPosition(
-      async (position) => {
-        const pos = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        
-        setCurrentLocation(pos);
-        
-        if (map) {
-          map.setCenter(pos);
-        }
-        
-        if (marker) {
-          marker.setPosition(pos);
-        }
-        
-        // Save location point to database
-        const sessionId = await sessionPromise;
-        if (sessionId && user) {
-          try {
-            await supabase
-              .from('location_points')
-              .insert({
-                session_id: sessionId,
-                user_id: user.id,
-                location: `POINT(${pos.lng} ${pos.lat})`,
-                accuracy: position.coords.accuracy,
-                timestamp: new Date().toISOString()
-              });
-          } catch (err) {
-            console.error('Error saving location point:', err);
-          }
-        }
-      },
-      (error) => {
-        console.error('Error tracking location:', error);
-        toast({
-          variant: "destructive",
-          title: "Tracking Error",
-          description: `Could not track your location: ${error.message}`,
-        });
-        stopTracking();
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 5000
-      }
-    );
-    
-    setWatchId(id);
-    setIsTracking(true);
-    
-    toast({
-      title: "Tracking Started",
-      description: "Your location is now being tracked in real-time",
-    });
-  }, [map, marker, isTracking, currentLocation, user]);
-  
-  // Stop tracking function
-  const stopTracking = useCallback(async () => {
-    if (watchId !== null) {
       navigator.geolocation.clearWatch(watchId);
       setWatchId(null);
       setIsTracking(false);
-      
-      // Update tracking session status in database
-      if (user) {
-        try {
-          const { data, error } = await supabase
-            .from('tracking_sessions')
-            .update({ status: 'completed', end_time: new Date().toISOString() })
-            .eq('user_id', user.id)
-            .eq('status', 'active');
-          
-          if (error) throw error;
-          
-          // Reload tracking history
-          loadTrackingHistory();
-        } catch (err) {
-          console.error('Error updating tracking session:', err);
-        }
-      }
+      setTrackingSession(null);
       
       toast({
         title: "Tracking Stopped",
-        description: "Your location is no longer being tracked",
+        description: "Your location tracking has been stopped",
+      });
+      
+      // Reload tracking history
+      loadTrackingHistory();
+    } catch (error) {
+      console.error('Error stopping tracking:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not stop tracking. Please try again.",
       });
     }
-  }, [watchId, user]);
-  
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-      }
+  };
+
+  const handlePositionUpdate = async (position: GeolocationPosition) => {
+    if (!user || !trackingSession) return;
+
+    const pos = {
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
     };
-  }, [watchId]);
+
+    try {
+      await TrackingService.addLocationPoint(
+        trackingSession.id,
+        user.id,
+        pos,
+        position.coords.accuracy
+      );
+
+      setCurrentLocation(pos);
+      if (map) {
+        map.setCenter(pos);
+      }
+      if (marker) {
+        marker.setPosition(pos);
+      }
+    } catch (error) {
+      console.error('Error updating position:', error);
+    }
+  };
+
+  const handlePositionError = (error: GeolocationPositionError) => {
+    console.error('Error tracking location:', error);
+    toast({
+      variant: "destructive",
+      title: "Tracking Error",
+      description: `Could not track your location: ${error.message}`,
+    });
+    handleStopTracking();
+  };
   
   // Search for a location
   const searchLocation = () => {
@@ -403,7 +364,7 @@ export default function Tracking() {
               <CardFooter className="flex justify-between">
                 <Button
                   variant={isTracking ? "destructive" : "default"}
-                  onClick={isTracking ? stopTracking : startTracking}
+                  onClick={isTracking ? handleStopTracking : handleStartTracking}
                   className="flex items-center gap-2"
                 >
                   {isTracking ? (
