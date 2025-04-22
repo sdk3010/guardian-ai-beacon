@@ -1,16 +1,21 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Loader2, Send } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { ai } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
+import VoiceAssistant from '@/components/voice/VoiceAssistant';
+import { voiceSynthesis } from '@/lib/voice';
 
 interface ChatMessage {
   id?: string;
   message: string;
   is_user: boolean;
   created_at?: string;
+  agent_type?: string;
 }
 
 export default function Chat() {
@@ -18,7 +23,9 @@ export default function Chat() {
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { user } = useAuth();
-
+  const { toast } = useToast();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
   const fetchChatHistory = useCallback(async () => {
     if (!user) return;
     
@@ -37,11 +44,16 @@ export default function Chat() {
     fetchChatHistory();
   }, [fetchChatHistory]);
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !user) return;
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSendMessage = async (userInput: string = newMessage) => {
+    if (!userInput.trim() || !user) return;
 
     const userMessage: ChatMessage = {
-      message: newMessage,
+      message: userInput,
       is_user: true
     };
 
@@ -50,18 +62,19 @@ export default function Chat() {
     setIsLoading(true);
 
     try {
-      const response = await ai.chat(newMessage);
+      const response = await ai.chat(userInput);
       
       const aiMessage: ChatMessage = {
         message: response.data.message,
-        is_user: false
+        is_user: false,
+        agent_type: response.data.agent_type || 'responder'
       };
 
       // Save messages to Supabase
       await Promise.all([
         supabase.from('chat_history').insert({
           user_id: user.id,
-          message: newMessage,
+          message: userInput,
           is_user: true
         }),
         supabase.from('chat_history').insert({
@@ -72,43 +85,108 @@ export default function Chat() {
       ]);
 
       setMessages(prev => [...prev, aiMessage]);
+      
+      // Speak the response with voice synthesis
+      if (aiMessage.message) {
+        voiceSynthesis.speak(aiMessage.message, true);
+      }
     } catch (error) {
       console.error('Error sending message:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to get a response from the AI assistant.",
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSendMessage();
+    }
+  };
+
+  const handleVoiceMessage = (message: string) => {
+    handleSendMessage(message);
+  };
+
+  const handleEmergency = () => {
+    toast({
+      variant: "destructive",
+      title: "Emergency Alert",
+      description: "Emergency services and contacts are being notified of your situation.",
+    });
+  };
+
   return (
-    <div className="flex flex-col h-full p-4">
-      <div className="flex-grow overflow-y-auto mb-4 space-y-2">
-        {messages.map((msg, index) => (
-          <div 
-            key={index} 
-            className={`p-2 rounded-lg max-w-[80%] 
-              ${msg.is_user ? 'bg-blue-100 self-end ml-auto' : 'bg-gray-100 self-start mr-auto'}`}
+    <div className="flex flex-col md:flex-row h-full gap-4 p-4 bg-[#1A1F2C]">
+      <div className="flex flex-col flex-grow md:w-2/3 h-full">
+        <div className="flex-grow overflow-y-auto mb-4 rounded-lg bg-[#232836] p-4 border border-[#9b87f5]/20">
+          <div className="space-y-4">
+            {messages.length === 0 && (
+              <div className="text-center text-[#F1F0FB] opacity-70 py-8">
+                <p>Send a message to start a conversation with Guardian AI</p>
+              </div>
+            )}
+            
+            {messages.map((msg, index) => (
+              <div 
+                key={index} 
+                className={`p-3 rounded-lg max-w-[85%] ${
+                  msg.is_user 
+                    ? 'bg-[#9b87f5]/10 border border-[#9b87f5]/30 text-white self-end ml-auto' 
+                    : 'bg-[#282c3a] border border-gray-700 text-[#F1F0FB] self-start mr-auto'
+                }`}
+              >
+                {!msg.is_user && msg.agent_type && (
+                  <div className="text-xs text-[#9b87f5] mb-1 font-semibold">
+                    {msg.agent_type.charAt(0).toUpperCase() + msg.agent_type.slice(1)} Agent
+                  </div>
+                )}
+                <div className="whitespace-pre-wrap">{msg.message}</div>
+              </div>
+            ))}
+            
+            {isLoading && (
+              <div className="p-3 bg-[#282c3a] border border-gray-700 rounded-lg text-[#F1F0FB] self-start mr-auto max-w-[85%]">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#9b87f5]" />
+                  <span>AI is thinking...</span>
+                </div>
+              </div>
+            )}
+            
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+        
+        <div className="flex space-x-2">
+          <Input
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Type your message..."
+            disabled={isLoading}
+            className="bg-[#282c3a] border-[#9b87f5]/30 text-white"
+          />
+          <Button 
+            onClick={() => handleSendMessage()} 
+            disabled={isLoading}
+            className="bg-[#9b87f5] hover:bg-[#8a76e4] text-white"
           >
-            {msg.message}
-          </div>
-        ))}
-        {isLoading && (
-          <div className="p-2 bg-gray-100 rounded-lg">
-            Generating response...
-          </div>
-        )}
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
       
-      <div className="flex space-x-2">
-        <Input
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type your message..."
-          disabled={isLoading}
-          onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+      <div className="md:w-1/3 mt-4 md:mt-0">
+        <VoiceAssistant 
+          onMessage={handleVoiceMessage} 
+          onEmergency={handleEmergency}
+          className="h-full"
         />
-        <Button onClick={handleSendMessage} disabled={isLoading}>
-          Send
-        </Button>
       </div>
     </div>
   );

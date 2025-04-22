@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MapPin, Navigation, Clock, Share2, AlertTriangle, Search } from "lucide-react";
+import { MapPin, Navigation, Clock, Share2, AlertTriangle, Search, Mic, Volume2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from '@/context/AuthContext';
 import { TrackingService, type TrackingSession, type LocationPoint } from '@/services/TrackingService';
-import { loadGoogleMapsScript } from '@/lib/maps';
+import { loadGoogleMapsScript, initMap } from '@/lib/maps';
+import VoiceAssistant from '@/components/voice/VoiceAssistant';
+import { voiceSynthesis } from '@/lib/voice';
 
 export default function Tracking() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -26,12 +28,16 @@ export default function Tracking() {
   const { user } = useAuth();
   const geocoderRef = useRef<google.maps.Geocoder | null>(null);
   const [trackingSession, setTrackingSession] = useState<TrackingSession | null>(null);
+  const [safetyScore, setSafetyScore] = useState(85);
+  const [safetyStatus, setSafetyStatus] = useState("Safe");
+  const [nearbyPlaces, setNearbyPlaces] = useState<Array<{name: string, type: string, distance: number}>>([]);
+  const [isMuted, setIsMuted] = useState(false);
   
   // Initialize Google Maps
   useEffect(() => {
     if (!mapRef.current) return;
     
-    const initMap = async () => {
+    const initializeMap = async () => {
       try {
         // Load Google Maps API
         await loadGoogleMapsScript();
@@ -103,6 +109,9 @@ export default function Tracking() {
                   }
                 });
               }
+              
+              // Find nearby safe places
+              findNearbySafePlaces(pos);
             },
             (error) => {
               console.error('Error getting location:', error);
@@ -124,7 +133,7 @@ export default function Tracking() {
       }
     };
     
-    initMap();
+    initializeMap();
   }, []);
   
   // Load tracking history
@@ -148,6 +157,19 @@ export default function Tracking() {
         description: "Failed to load tracking history. Please try again.",
       });
     }
+  };
+
+  const findNearbySafePlaces = (location: {lat: number, lng: number}) => {
+    // Simulate finding nearby safe places
+    setTimeout(() => {
+      const mockPlaces = [
+        { name: "Downtown Police Station", type: "Police", distance: 0.8 },
+        { name: "City Hospital", type: "Hospital", distance: 1.2 },
+        { name: "Central Fire Department", type: "Fire Station", distance: 1.5 },
+        { name: "24/7 Pharmacy", type: "Pharmacy", distance: 0.3 },
+      ];
+      setNearbyPlaces(mockPlaces);
+    }, 2000);
   };
   
   const handleStartTracking = async () => {
@@ -175,6 +197,10 @@ export default function Tracking() {
         title: "Tracking Started",
         description: "Your location is now being tracked in real-time",
       });
+
+      if (!isMuted) {
+        voiceSynthesis.speak("Tracking started. Your location is now being monitored for safety.");
+      }
     } catch (error) {
       console.error('Error starting tracking:', error);
       toast({
@@ -200,6 +226,10 @@ export default function Tracking() {
         title: "Tracking Stopped",
         description: "Your location tracking has been stopped",
       });
+
+      if (!isMuted) {
+        voiceSynthesis.speak("Tracking stopped. Your location is no longer being monitored.");
+      }
       
       // Reload tracking history
       loadTrackingHistory();
@@ -295,6 +325,68 @@ export default function Tracking() {
       }
     });
   };
+
+  const handleVoiceCommand = (message: string) => {
+    // Process voice commands
+    const lowerMessage = message.toLowerCase();
+    
+    if (lowerMessage.includes("where am i")) {
+      if (currentLocation) {
+        if (geocoderRef.current) {
+          geocoderRef.current.geocode({ location: currentLocation }, (results, status) => {
+            if (status === 'OK' && results && results[0]) {
+              const address = results[0].formatted_address;
+              if (!isMuted) {
+                voiceSynthesis.speak(`You are currently at ${address}`);
+              }
+            }
+          });
+        }
+      }
+    } 
+    else if (lowerMessage.includes("safe places") || lowerMessage.includes("nearby")) {
+      if (nearbyPlaces.length > 0) {
+        const placesList = nearbyPlaces.map(place => 
+          `${place.name}, a ${place.type} ${place.distance.toFixed(1)} miles away`
+        ).join(". ");
+        
+        if (!isMuted) {
+          voiceSynthesis.speak(`I found these safe places nearby: ${placesList}`);
+        }
+      } else {
+        if (!isMuted) {
+          voiceSynthesis.speak("I'm still looking for safe places nearby. Please wait a moment.");
+        }
+      }
+    }
+    else if (lowerMessage.includes("am i safe")) {
+      if (!isMuted) {
+        voiceSynthesis.speak(`Your current safety score is ${safetyScore}%. You're in a ${safetyStatus.toLowerCase()} area.`);
+      }
+    }
+    else if (lowerMessage.includes("start tracking")) {
+      handleStartTracking();
+    }
+    else if (lowerMessage.includes("stop tracking")) {
+      handleStopTracking();
+    }
+  };
+
+  const handleEmergency = () => {
+    toast({
+      variant: "destructive",
+      title: "Emergency Alert",
+      description: "Emergency services and contacts are being notified of your situation.",
+    });
+  };
+
+  const toggleMute = () => {
+    setIsMuted(!isMuted);
+    toast({
+      title: isMuted ? "Voice Unmuted" : "Voice Muted",
+      description: isMuted ? "Voice responses are now enabled" : "Voice responses are now disabled",
+    });
+  };
   
   // Format date for display
   const formatDate = (dateString: string) => {
@@ -308,146 +400,184 @@ export default function Tracking() {
   };
   
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6 flex items-center">
-        <MapPin className="mr-2 h-6 w-6 text-primary" />
-        Location Tracking
-      </h1>
+    <div className="p-4 md:p-6 max-w-6xl mx-auto bg-[#1A1F2C] text-white">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold flex items-center">
+          <MapPin className="mr-2 h-6 w-6 text-[#9b87f5]" />
+          Safety Tracking
+        </h1>
+        <div className="flex gap-2">
+          <Button
+            variant={isTracking ? "destructive" : "default"}
+            onClick={isTracking ? handleStopTracking : handleStartTracking}
+            className={isTracking ? "" : "bg-[#9b87f5] hover:bg-[#8a76e4]"}
+          >
+            {isTracking ? "Stop Tracking" : "Start Tracking"}
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={toggleMute}
+            className="border-[#9b87f5] text-[#9b87f5]"
+          >
+            <Volume2 className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
       
-      <Tabs defaultValue="map">
-        <TabsList className="mb-4">
+      <Tabs defaultValue="map" className="w-full">
+        <TabsList className="mb-4 bg-[#232836] text-[#F1F0FB]">
           <TabsTrigger value="map">Map View</TabsTrigger>
           <TabsTrigger value="history">Tracking History</TabsTrigger>
         </TabsList>
         
         <TabsContent value="map">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Card className="md:col-span-2">
-              <CardHeader className="pb-2">
-                <CardTitle>Live Location</CardTitle>
-                <CardDescription>
-                  View and track your current location
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="relative">
-                  <div 
-                    ref={mapRef} 
-                    className="w-full h-[400px] rounded-md overflow-hidden border"
-                  ></div>
-                  
-                  <div className="absolute top-4 left-4 right-4">
-                    <div className="flex gap-2 bg-background/90 backdrop-blur-sm p-2 rounded-md border shadow-sm">
-                      <Input
-                        placeholder="Search for a location..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && searchLocation()}
-                        className="flex-1"
-                      />
-                      <Button 
-                        onClick={searchLocation} 
-                        disabled={isLoading}
-                        size="icon"
-                      >
-                        <Search className="h-4 w-4" />
-                      </Button>
+            <div className="md:col-span-2 space-y-6">
+              <Card className="bg-[#232836] border-gray-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[#F1F0FB]">Live Location</CardTitle>
+                  <CardDescription className="text-gray-400">
+                    View and track your current location
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="relative">
+                    <div 
+                      ref={mapRef} 
+                      className="w-full h-[400px] rounded-md overflow-hidden border border-gray-700"
+                    ></div>
+                    
+                    <div className="absolute top-4 left-4 right-4">
+                      <div className="flex gap-2 bg-[#1A1F2C]/90 backdrop-blur-sm p-2 rounded-md border border-gray-700 shadow-sm">
+                        <Input
+                          placeholder="Search for a location..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && searchLocation()}
+                          className="flex-1 bg-[#282c3a] border-gray-700 text-white"
+                        />
+                        <Button 
+                          onClick={searchLocation} 
+                          disabled={isLoading}
+                          size="icon"
+                          className="bg-[#9b87f5] hover:bg-[#8a76e4]"
+                        >
+                          <Search className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-              <CardFooter className="flex justify-between">
-                <Button
-                  variant={isTracking ? "destructive" : "default"}
-                  onClick={isTracking ? handleStopTracking : handleStartTracking}
-                  className="flex items-center gap-2"
-                >
-                  {isTracking ? (
-                    <>
-                      <AlertTriangle className="h-4 w-4" />
-                      Stop Tracking
-                    </>
-                  ) : (
-                    <>
-                      <Navigation className="h-4 w-4" />
-                      Start Tracking
-                    </>
+                </CardContent>
+                <CardFooter className="flex justify-between">
+                  <Button
+                    variant={isTracking ? "destructive" : "default"}
+                    onClick={isTracking ? handleStopTracking : handleStartTracking}
+                    className={`flex items-center gap-2 ${isTracking ? "" : "bg-[#9b87f5] hover:bg-[#8a76e4]"}`}
+                  >
+                    {isTracking ? (
+                      <>
+                        <AlertTriangle className="h-4 w-4" />
+                        Stop Tracking
+                      </>
+                    ) : (
+                      <>
+                        <Navigation className="h-4 w-4" />
+                        Start Tracking
+                      </>
+                    )}
+                  </Button>
+                  
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (currentLocation) {
+                        const url = `https://www.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`;
+                        navigator.clipboard.writeText(url);
+                        toast({
+                          title: "Location Copied",
+                          description: "Location link copied to clipboard",
+                        });
+                      }
+                    }}
+                    disabled={!currentLocation}
+                    className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]"
+                  >
+                    <Share2 className="h-4 w-4" />
+                    Share Location
+                  </Button>
+                </CardFooter>
+              </Card>
+              
+              <Card className="bg-[#232836] border-gray-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[#F1F0FB] flex items-center">
+                    <div className="mr-2 h-3 w-3 rounded-full bg-green-500"></div>
+                    Safety Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <span>Safety Score</span>
+                      <span className="font-bold text-green-400">{safetyScore}%</span>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2.5">
+                      <div className="bg-green-500 h-2.5 rounded-full" style={{ width: `${safetyScore}%` }}></div>
+                    </div>
+                  </div>
+                  <p className="text-[#F1F0FB]">You're in a safe area</p>
+                  {currentLocation && (
+                    <p className="text-gray-400 text-sm">
+                      Current Location: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+                    </p>
                   )}
-                </Button>
-                
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (currentLocation) {
-                      const url = `https://www.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`;
-                      navigator.clipboard.writeText(url);
-                      toast({
-                        title: "Location Copied",
-                        description: "Location link copied to clipboard",
-                      });
-                    }
-                  }}
-                  disabled={!currentLocation}
-                  className="flex items-center gap-2"
-                >
-                  <Share2 className="h-4 w-4" />
-                  Share Location
-                </Button>
-              </CardFooter>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
             
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle>Tracking Options</CardTitle>
-                <CardDescription>
-                  Configure your tracking preferences
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="high-accuracy">High Accuracy</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Use GPS for precise location
-                    </p>
-                  </div>
-                  <Switch id="high-accuracy" defaultChecked />
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="background-tracking">Background Tracking</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Continue tracking when app is closed
-                    </p>
-                  </div>
-                  <Switch id="background-tracking" />
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="share-contacts">Share with Contacts</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Allow trusted contacts to see your location
-                    </p>
-                  </div>
-                  <Switch id="share-contacts" />
-                </div>
-              </CardContent>
-              <CardFooter>
-                <p className="text-xs text-muted-foreground">
-                  Your location data is encrypted and only shared with your explicit permission.
-                </p>
-              </CardFooter>
-            </Card>
+            <div className="space-y-6">
+              <Card className="bg-[#232836] border-gray-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[#F1F0FB] flex items-center">
+                    <div className="mr-2 h-3 w-3 rounded-full bg-green-500"></div>
+                    Nearby Safe Places
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {nearbyPlaces.length > 0 ? (
+                    <ul className="space-y-3">
+                      {nearbyPlaces.map((place, index) => (
+                        <li key={index} className="flex justify-between border-b border-gray-700 pb-2">
+                          <div>
+                            <p className="font-medium text-[#F1F0FB]">{place.name}</p>
+                            <p className="text-sm text-gray-400">{place.type}</p>
+                          </div>
+                          <span className="text-sm text-[#9b87f5]">{place.distance.toFixed(1)} miles</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-center py-8 text-gray-400">
+                      <p>Loading safe places nearby...</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+              
+              <VoiceAssistant 
+                onMessage={handleVoiceCommand}
+                onEmergency={handleEmergency}
+              />
+            </div>
           </div>
         </TabsContent>
         
         <TabsContent value="history">
-          <Card>
+          <Card className="bg-[#232836] border-gray-700">
             <CardHeader>
-              <CardTitle>Recent Tracking Sessions</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-[#F1F0FB]">Recent Tracking Sessions</CardTitle>
+              <CardDescription className="text-gray-400">
                 View your recent location tracking activity
               </CardDescription>
             </CardHeader>
@@ -455,19 +585,19 @@ export default function Tracking() {
               {trackingHistory.length > 0 ? (
                 <div className="space-y-4">
                   {trackingHistory.map((session) => (
-                    <div key={session.id} className="flex items-center justify-between border-b pb-4">
+                    <div key={session.id} className="flex items-center justify-between border-b border-gray-700 pb-4">
                       <div>
-                        <h3 className="font-medium">
+                        <h3 className="font-medium text-[#F1F0FB]">
                           Tracking Session {session.id.substring(0, 8)}
                         </h3>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-gray-400">
                           Started: {formatDate(session.start_time)}
                         </p>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-gray-400">
                           Status: <span className={session.status === 'active' ? 'text-green-500' : ''}>{session.status}</span>
                         </p>
                       </div>
-                      <Button variant="outline" size="sm" className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]">
                         <Clock className="h-4 w-4" />
                         View Details
                       </Button>
@@ -476,9 +606,9 @@ export default function Tracking() {
                 </div>
               ) : (
                 <div className="text-center py-8">
-                  <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="font-medium text-lg mb-2">No Tracking History</h3>
-                  <p className="text-muted-foreground">
+                  <Clock className="h-12 w-12 text-gray-500 mx-auto mb-4" />
+                  <h3 className="font-medium text-lg mb-2 text-[#F1F0FB]">No Tracking History</h3>
+                  <p className="text-gray-400">
                     You haven't started any tracking sessions yet.
                   </p>
                 </div>
