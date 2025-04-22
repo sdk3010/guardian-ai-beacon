@@ -10,12 +10,14 @@ declare interface Window {
       SymbolPath: {
         CIRCLE: number;
       };
-      Geocoder: any;
+      Geocoder: any; // Added missing Geocoder type
       places: {
         PlacesService: any;
         PlacesServiceStatus: {
           OK: string;
         };
+        AutocompleteService: any; // Added for completeness
+        SearchBox: any; // Added for completeness
       };
       geometry: {
         spherical: {
