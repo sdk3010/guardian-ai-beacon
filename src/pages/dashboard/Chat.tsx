@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Send } from 'lucide-react';
+import { Loader2, Send, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { ai } from '@/lib/api';
@@ -22,6 +22,7 @@ export default function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
   const { toast } = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -68,7 +69,8 @@ export default function Chat() {
 
   const handleSendMessage = async (userInput: string = newMessage) => {
     if (!userInput.trim() || !user) return;
-
+    setError(null);
+    
     const userMessage: ChatMessage = {
       message: userInput,
       is_user: true
@@ -92,27 +94,18 @@ export default function Chat() {
         console.error('Error saving user message:', userMsgError);
       }
       
-      // Make API call for response
-      const response = await fetch('https://guardianai-backend.sdk3010.repl.co/ai/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': 'ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA=='
-        },
-        body: JSON.stringify({ message: userInput }),
-      });
+      // Make API call for response using axios
+      const response = await ai.chat(userInput);
+      console.log('AI response:', response);
       
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+      if (!response || !response.data) {
+        throw new Error('No response from AI assistant');
       }
       
-      const data = await response.json();
-      console.log('AI response data:', data);
-      
       const aiMessage: ChatMessage = {
-        message: data.message || "I'm having trouble understanding. Could you rephrase that?",
+        message: response.data.message || "I'm having trouble understanding. Could you rephrase that?",
         is_user: false,
-        agent_type: data.agent_type || 'responder'
+        agent_type: response.data.agent_type || 'responder'
       };
 
       // Save AI message to Supabase
@@ -134,6 +127,7 @@ export default function Chat() {
       }
     } catch (error) {
       console.error('Error sending message:', error);
+      setError('Failed to get a response from the AI assistant. Please try again later.');
       toast({
         variant: "destructive",
         title: "Error",
@@ -196,6 +190,15 @@ export default function Chat() {
                 <div className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin text-[#9b87f5]" />
                   <span>AI is thinking...</span>
+                </div>
+              </div>
+            )}
+            
+            {error && (
+              <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-white self-start mr-auto max-w-[85%]">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-400" />
+                  <span>{error}</span>
                 </div>
               </div>
             )}

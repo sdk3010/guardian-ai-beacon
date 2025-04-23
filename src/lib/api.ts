@@ -4,13 +4,29 @@ import axios from 'axios';
 const API_BASE_URL = 'https://guardianai-backend.sdk3010.repl.co';
 const API_KEY = 'ESu++FGew14skiJjdywXokWEnUza5aiDmb1zQRYFoui+7/ww9v/xIphU0FQ9nzie0nPGT/T58aQt091W0sjUDA==';
 
+// Create axios instance with default config
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'x-api-key': API_KEY,
     'Content-Type': 'application/json',
   },
+  timeout: 20000, // 20 second timeout
 });
+
+// Add response interceptor for error handling
+api.interceptors.response.use(
+  response => response,
+  error => {
+    console.error('API request failed:', error);
+    // Return a formatted error to handle in the components
+    return Promise.reject({
+      message: error.response?.data?.message || 'Network error, please try again',
+      status: error.response?.status || 500,
+      data: error.response?.data
+    });
+  }
+);
 
 export const auth = {
   login: (email: string, password: string) => 
@@ -59,12 +75,36 @@ export const tracking = {
     api.get('/map/safe-places', { params: location }),
 };
 
-// New AI chatbot API
+// AI chatbot API with better error handling
 export const ai = {
-  chat: (message: string, conversationId?: string) => 
-    api.post('/ai/chat', { message, conversationId }),
+  chat: async (message: string, conversationId?: string) => {
+    try {
+      console.log('Making AI chat request with message:', message);
+      
+      // Create a more robust chat request
+      const response = await axios.post(
+        `${API_BASE_URL}/ai/chat`, 
+        { message, conversationId },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': API_KEY
+          },
+          timeout: 20000  // 20 seconds timeout
+        }
+      );
+      
+      console.log('AI chat response received:', response.data);
+      return response;
+    } catch (error) {
+      console.error('AI chat error:', error);
+      throw error;
+    }
+  },
+  
   textToSpeech: (text: string, voiceId?: string) => 
     api.post('/ai/text-to-speech', { text, voiceId }),
+    
   search: (query: string) => 
     api.post('/ai/search', { query }),
 };

@@ -13,13 +13,17 @@ export const TRIGGER_PHRASES = [
   'am i safe here',
   'help me',
   'get me out of here',
-  'i\'m scared'
+  'i\'m scared',
+  'emergency',
+  'danger',
+  'i am in danger',
+  'call the police'
 ];
 
 class VoiceRecognition {
   recognition: any = null;
   isListening: boolean = false;
-  confidenceThreshold: number = 0.2; // Lower threshold to improve recognition
+  confidenceThreshold: number = 0.1; // Lower threshold to improve recognition
   minWordCount: number = 1; // Lower word count to improve recognition
   inactivityTimeout: number | null = null;
   lastResultTime: number = 0;
@@ -237,8 +241,8 @@ class VoiceRecognition {
       }
     }
     
-    // If more than 70% of words match, consider it a match
-    return matchCount >= phraseWords.length * 0.6; // Lower threshold for better matching
+    // If more than 60% of words match, consider it a match (more lenient matching)
+    return matchCount >= phraseWords.length * 0.6;
   }
   
   // Simple word similarity check
@@ -408,18 +412,26 @@ export const elevenLabsSynthesis = new ElevenLabsSynthesis();
 
 // Combined voice synthesis with fallback
 export const voiceSynthesis = {
-  async speak(text: string, useElevenLabs: boolean = true, voiceId?: string) {
+  async speak(text: string, useElevenLabs: boolean = false, voiceId?: string) {
+    if (!text) return;
+    
     console.log(`Speaking: "${text}" (using ElevenLabs: ${useElevenLabs})`);
     
-    if (useElevenLabs) {
-      try {
+    try {
+      if (useElevenLabs) {
         return await elevenLabsSynthesis.speak(text, voiceId);
-      } catch (error) {
-        console.error('ElevenLabs failed, falling back to Web Speech API', error);
-        return webSpeechSynthesis.speak(text);
+      } else {
+        return await webSpeechSynthesis.speak(text);
       }
-    } else {
-      return webSpeechSynthesis.speak(text);
+    } catch (error) {
+      console.error('Speech synthesis failed:', error);
+      // Ultimate fallback to ensure user gets some response
+      try {
+        return await webSpeechSynthesis.speak(text);
+      } catch (finalError) {
+        console.error('All speech synthesis methods failed:', finalError);
+        return Promise.resolve();
+      }
     }
   }
 };

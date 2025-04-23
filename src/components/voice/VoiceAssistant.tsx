@@ -19,6 +19,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
   const [transcript, setTranscript] = useState('I\'m listening...');
   const [inputMessage, setInputMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
@@ -95,6 +96,8 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       
       setIsListening(true);
       setTranscript("I'm listening...");
+      setErrorMessage(null);
+      
       voiceRecognition.start(
         (text) => {
           setTranscript(text);
@@ -156,6 +159,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
 
     // Reset states
     setInputMessage('');
+    setErrorMessage(null);
     if (!isListening) {
       setTranscript("I'm listening...");
     }
@@ -164,6 +168,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
     // Process the message
     if (onMessage) {
       onMessage(message);
+      return; // Let parent component handle the rest
     }
 
     // Check for trigger phrases
@@ -180,6 +185,11 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       // Get AI response for voice interaction
       const response = await ai.chat(message);
       console.log("AI response:", response);
+      
+      if (!response || !response.data) {
+        throw new Error('No response received from AI');
+      }
+      
       const aiResponse = response?.data?.message || "I'm sorry, I couldn't process your request.";
       
       // Temporarily stop listening while speaking to avoid feedback loop
@@ -210,6 +220,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       }
     } catch (error) {
       console.error("Error getting AI response:", error);
+      setErrorMessage("Could not get a response from the assistant. Please try again later.");
       toast({
         variant: "destructive",
         title: "Error",
@@ -271,6 +282,13 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
           <div className="bg-red-500/20 p-3 rounded-md flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
             <p className="text-sm text-white">Microphone access denied. Please enable it in your browser settings.</p>
+          </div>
+        )}
+        
+        {errorMessage && (
+          <div className="bg-red-500/20 p-3 rounded-md flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-red-500" />
+            <p className="text-sm text-white">{errorMessage}</p>
           </div>
         )}
         
