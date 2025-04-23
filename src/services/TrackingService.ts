@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface TrackingSession {
@@ -118,17 +117,44 @@ export class TrackingService {
     let endLocation: { lat: number; lng: number } | undefined = undefined;
     
     try {
-      // Try to parse start_location if it's a string
+      // Parse start_location based on its current format
       if (typeof dbSession.start_location === 'string') {
-        startLocation = JSON.parse(dbSession.start_location);
+        // Check if it's a PostgreSQL POINT type
+        if (dbSession.start_location.startsWith('POINT')) {
+          const matches = dbSession.start_location.match(/POINT\(([^ ]+) ([^)]+)\)/);
+          if (matches && matches.length === 3) {
+            startLocation = {
+              lng: parseFloat(matches[1]),
+              lat: parseFloat(matches[2])
+            };
+          } else {
+            // If we can't parse it, default to empty coords
+            startLocation = { lat: 0, lng: 0 };
+          }
+        } else {
+          // Otherwise try to parse as JSON
+          startLocation = JSON.parse(dbSession.start_location);
+        }
       } else {
         startLocation = dbSession.start_location;
       }
       
-      // Try to parse end_location if it exists and is a string
+      // Try to parse end_location if it exists
       if (dbSession.end_location) {
         if (typeof dbSession.end_location === 'string') {
-          endLocation = JSON.parse(dbSession.end_location);
+          // Check if it's a PostgreSQL POINT type
+          if (dbSession.end_location.startsWith('POINT')) {
+            const matches = dbSession.end_location.match(/POINT\(([^ ]+) ([^)]+)\)/);
+            if (matches && matches.length === 3) {
+              endLocation = {
+                lng: parseFloat(matches[1]),
+                lat: parseFloat(matches[2])
+              };
+            }
+          } else {
+            // Otherwise try to parse as JSON
+            endLocation = JSON.parse(dbSession.end_location);
+          }
         } else {
           endLocation = dbSession.end_location;
         }
@@ -157,9 +183,24 @@ export class TrackingService {
     let locationData: { lat: number; lng: number };
     
     try {
-      // Try to parse location if it's a string
+      // Try to parse location based on its format
       if (typeof dbPoint.location === 'string') {
-        locationData = JSON.parse(dbPoint.location);
+        // Check if it's a PostgreSQL POINT type
+        if (dbPoint.location.startsWith('POINT')) {
+          const matches = dbPoint.location.match(/POINT\(([^ ]+) ([^)]+)\)/);
+          if (matches && matches.length === 3) {
+            locationData = {
+              lng: parseFloat(matches[1]),
+              lat: parseFloat(matches[2])
+            };
+          } else {
+            // If we can't parse it, default to empty coords
+            locationData = { lat: 0, lng: 0 };
+          }
+        } else {
+          // Otherwise try to parse as JSON
+          locationData = JSON.parse(dbPoint.location);
+        }
       } else {
         locationData = dbPoint.location;
       }

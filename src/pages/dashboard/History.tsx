@@ -130,7 +130,7 @@ export default function History() {
         // Fetch data based on selected history type
         if (historyType === 'all' || historyType === 'tracking') {
           let query = supabase
-            .from('tracking_history')
+            .from('location_points')
             .select('*')
             .eq('user_id', user.id)
             .order('timestamp', { ascending: false });
@@ -146,7 +146,18 @@ export default function History() {
           const { data, error } = await query;
           
           if (error) throw error;
-          setTrackingHistory(data || []);
+          
+          // Convert to TrackingRecord format
+          const trackingRecords: TrackingRecord[] = (data || []).map(point => ({
+            id: point.id,
+            user_id: point.user_id,
+            location: point.location,
+            timestamp: point.timestamp,
+            address: undefined,
+            status: undefined
+          }));
+          
+          setTrackingHistory(trackingRecords);
         }
         
         if (historyType === 'all' || historyType === 'chat') {
@@ -172,7 +183,7 @@ export default function History() {
         
         if (historyType === 'all' || historyType === 'alerts') {
           let query = supabase
-            .from('alerts_history')
+            .from('alerts')
             .select('*')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false });
@@ -188,7 +199,21 @@ export default function History() {
           const { data, error } = await query;
           
           if (error) throw error;
-          setAlertHistory(data || []);
+          
+          // Convert to AlertRecord format
+          const alertRecords: AlertRecord[] = (data || []).map(alert => ({
+            id: alert.id,
+            user_id: alert.user_id,
+            message: alert.message,
+            location: alert.latitude && alert.longitude 
+              ? { lat: alert.latitude, lng: alert.longitude } 
+              : undefined,
+            created_at: alert.created_at,
+            status: alert.status,
+            type: alert.type
+          }));
+          
+          setAlertHistory(alertRecords);
         }
       } catch (error) {
         console.error('Error fetching history:', error);
