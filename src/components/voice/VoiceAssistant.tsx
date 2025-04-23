@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, AlertTriangle } from 'lucide-react';
+import { Mic, MicOff, Send, AlertTriangle, Volume2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +22,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
+  const [isVoiceMuted, setIsVoiceMuted] = useState(false);
 
   // Check microphone permission
   useEffect(() => {
@@ -106,7 +107,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       );
       
       // Provide audio feedback
-      voiceSynthesis.speak("I'm listening. How can I help you?", false);
+      voiceSynthesis.speak("I'm listening. How can I help you?", !isVoiceMuted);
       
       toast({
         title: "Voice Recognition Active",
@@ -138,11 +139,10 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       variant: "destructive",
       title: "Emergency Detected",
       description: `Trigger phrase detected: "${triggerPhrase}"`,
-      icon: <AlertTriangle className="h-5 w-5" />,
     });
     
     // Speak a response to the user
-    await voiceSynthesis.speak("I've detected an emergency situation. Sending an alert to your emergency contacts.", false);
+    await voiceSynthesis.speak("I've detected an emergency situation. Sending an alert to your emergency contacts.", !isVoiceMuted);
     
     // Call the emergency handler if provided
     if (onEmergency) {
@@ -190,7 +190,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       
       // Speak the response
       try {
-        await voiceSynthesis.speak(aiResponse, true);
+        await voiceSynthesis.speak(aiResponse, !isVoiceMuted);
       } catch (speakError) {
         console.error("Error speaking response:", speakError);
         // Fallback to web speech if ElevenLabs fails
@@ -227,6 +227,14 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
     if (e.key === 'Enter') {
       handleSendMessage();
     }
+  };
+
+  const toggleVoiceMute = () => {
+    setIsVoiceMuted(!isVoiceMuted);
+    toast({
+      title: isVoiceMuted ? "Voice Responses Enabled" : "Voice Responses Disabled",
+      description: isVoiceMuted ? "The assistant will now speak responses" : "The assistant will not speak responses",
+    });
   };
 
   // Clean up voice recognition on component unmount
@@ -293,6 +301,14 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
             aria-label={isListening ? "Stop listening" : "Start listening"}
           >
             {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </Button>
+          <Button
+            onClick={toggleVoiceMute}
+            variant="outline"
+            className="border-[#9b87f5] text-[#9b87f5] hover:bg-[#9b87f5] hover:text-white"
+            aria-label={isVoiceMuted ? "Enable voice" : "Disable voice"}
+          >
+            <Volume2 className={`h-4 w-4 ${isVoiceMuted ? "opacity-50" : ""}`} />
           </Button>
         </div>
       </CardContent>

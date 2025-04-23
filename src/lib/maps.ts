@@ -27,7 +27,7 @@ export const loadGoogleMapsScript = (): Promise<void> => {
       console.log('Loading Google Maps API...');
       const script = document.createElement('script');
       script.id = 'google-maps-script';
-      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry&callback=initGoogleMaps&loading=async`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyBABGhJ-EHjSh-z9diiLRSk3JR9cVqcA6g&libraries=places,geometry&callback=initGoogleMaps&loading=async`;
       script.async = true;
       script.defer = true;
       
@@ -164,5 +164,6 @@ export const initMap = async (
 declare global {
   interface Window {
     initGoogleMaps: () => void;
+    google: typeof google;
   }
 }

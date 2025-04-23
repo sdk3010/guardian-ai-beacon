@@ -12,6 +12,7 @@ import { loadGoogleMapsScript, initMap } from '@/lib/maps';
 import VoiceAssistant from '@/components/voice/VoiceAssistant';
 import { voiceSynthesis } from '@/lib/voice';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export default function Tracking() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -34,6 +35,8 @@ export default function Tracking() {
   const [selectedSession, setSelectedSession] = useState<TrackingSession | null>(null);
   const [sessionPoints, setSessionPoints] = useState<LocationPoint[]>([]);
   const [showSessionDialog, setShowSessionDialog] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
   
   // Initialize Google Maps
   useEffect(() => {
@@ -497,6 +500,56 @@ export default function Tracking() {
       setIsLoading(false);
     }
   };
+
+  // Share location
+  const handleShareLocation = () => {
+    if (!currentLocation) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "No location available to share.",
+      });
+      return;
+    }
+
+    const url = `https://maps.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`;
+    setShareUrl(url);
+    setShowShareDialog(true);
+  };
+
+  const shareVia = (platform: string) => {
+    if (!shareUrl) return;
+
+    let shareLink = '';
+    
+    switch (platform) {
+      case 'whatsapp':
+        shareLink = `https://api.whatsapp.com/send?text=${encodeURIComponent(`Check my location: ${shareUrl}`)}`;
+        break;
+      case 'telegram':
+        shareLink = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent('Check my location')}`;
+        break;
+      case 'email':
+        shareLink = `mailto:?subject=${encodeURIComponent('My Current Location')}&body=${encodeURIComponent(`Here's my current location: ${shareUrl}`)}`;
+        break;
+      case 'sms':
+        shareLink = `sms:?body=${encodeURIComponent(`Here's my current location: ${shareUrl}`)}`;
+        break;
+      case 'copy':
+        navigator.clipboard.writeText(shareUrl);
+        toast({
+          title: "Link Copied",
+          description: "Location link copied to clipboard",
+        });
+        setShowShareDialog(false);
+        return;
+      default:
+        shareLink = shareUrl;
+    }
+    
+    window.open(shareLink, '_blank');
+    setShowShareDialog(false);
+  };
   
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto bg-[#1A1F2C] text-white">
@@ -596,24 +649,35 @@ export default function Tracking() {
                     )}
                   </Button>
                   
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      if (currentLocation) {
-                        const url = `https://www.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`;
-                        navigator.clipboard.writeText(url);
-                        toast({
-                          title: "Location Copied",
-                          description: "Location link copied to clipboard",
-                        });
-                      }
-                    }}
-                    disabled={!currentLocation || isLoading}
-                    className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]"
-                  >
-                    <Share2 className="h-4 w-4" />
-                    Share Location
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        disabled={!currentLocation || isLoading}
+                        className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]"
+                      >
+                        <Share2 className="h-4 w-4" />
+                        Share Location
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="bg-[#232836] border-gray-700">
+                      <DropdownMenuItem onClick={() => shareVia('whatsapp')} className="text-[#F1F0FB] cursor-pointer">
+                        Via WhatsApp
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => shareVia('telegram')} className="text-[#F1F0FB] cursor-pointer">
+                        Via Telegram
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => shareVia('email')} className="text-[#F1F0FB] cursor-pointer">
+                        Via Email
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => shareVia('sms')} className="text-[#F1F0FB] cursor-pointer">
+                        Via SMS
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => shareVia('copy')} className="text-[#F1F0FB] cursor-pointer">
+                        Copy Link
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </CardFooter>
               </Card>
               
@@ -815,6 +879,72 @@ export default function Tracking() {
                 Close
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Share Location Dialog */}
+      <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
+        <DialogContent className="bg-[#232836] text-white border-[#9b87f5]/30">
+          <DialogHeader>
+            <DialogTitle className="text-[#F1F0FB]">Share Your Location</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Choose how you'd like to share your current location
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 pt-2">
+            <Button
+              variant="outline"
+              className="w-full justify-start border-gray-700 text-[#F1F0FB] hover:bg-gray-700/50"
+              onClick={() => shareVia('whatsapp')}
+            >
+              <div className="mr-2 h-5 w-5 rounded-full bg-green-500 flex items-center justify-center">
+                <span className="text-white font-bold text-xs">W</span>
+              </div>
+              Share via WhatsApp
+            </Button>
+            
+            <Button
+              variant="outline"
+              className="w-full justify-start border-gray-700 text-[#F1F0FB] hover:bg-gray-700/50"
+              onClick={() => shareVia('telegram')}
+            >
+              <div className="mr-2 h-5 w-5 rounded-full bg-blue-500 flex items-center justify-center">
+                <span className="text-white font-bold text-xs">T</span>
+              </div>
+              Share via Telegram
+            </Button>
+            
+            <Button
+              variant="outline"
+              className="w-full justify-start border-gray-700 text-[#F1F0FB] hover:bg-gray-700/50"
+              onClick={() => shareVia('email')}
+            >
+              <div className="mr-2 h-5 w-5 rounded-full bg-red-500 flex items-center justify-center">
+                <span className="text-white font-bold text-xs">E</span>
+              </div>
+              Share via Email
+            </Button>
+            
+            <Button
+              variant="outline"
+              className="w-full justify-start border-gray-700 text-[#F1F0FB] hover:bg-gray-700/50"
+              onClick={() => shareVia('sms')}
+            >
+              <div className="mr-2 h-5 w-5 rounded-full bg-yellow-500 flex items-center justify-center">
+                <span className="text-white font-bold text-xs">S</span>
+              </div>
+              Share via SMS
+            </Button>
+            
+            <Button
+              variant="default"
+              className="w-full bg-[#9b87f5] hover:bg-[#8a76e4]"
+              onClick={() => shareVia('copy')}
+            >
+              Copy Location Link
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

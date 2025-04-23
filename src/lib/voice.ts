@@ -19,12 +19,14 @@ export const TRIGGER_PHRASES = [
 class VoiceRecognition {
   recognition: any = null;
   isListening: boolean = false;
-  confidenceThreshold: number = 0.3; // Lower threshold to improve recognition
+  confidenceThreshold: number = 0.2; // Lower threshold to improve recognition
   minWordCount: number = 1; // Lower word count to improve recognition
   inactivityTimeout: number | null = null;
   lastResultTime: number = 0;
-  inactivityTimeoutMs: number = 15000; // Longer timeout for better recognition
+  inactivityTimeoutMs: number = 20000; // Longer timeout for better recognition
   isInitialized: boolean = false;
+  restartCount: number = 0;
+  maxRestarts: number = 5;
 
   constructor() {
     this.initRecognition();
@@ -43,7 +45,7 @@ class VoiceRecognition {
         this.recognition.continuous = true;
         this.recognition.interimResults = true;
         this.recognition.lang = 'en-US';
-        this.recognition.maxAlternatives = 3; // Increase alternatives for better matching
+        this.recognition.maxAlternatives = 5; // Increase alternatives for better matching
         
         this.isInitialized = true;
         console.log("Voice recognition initialized successfully");
@@ -67,6 +69,8 @@ class VoiceRecognition {
       return;
     }
 
+    this.restartCount = 0; // Reset restart count
+    
     this.recognition.onresult = (event: any) => {
       this.lastResultTime = Date.now();
       let finalTranscript = '';
@@ -132,12 +136,7 @@ class VoiceRecognition {
       } else {
         // For other errors, try to restart after a delay
         console.log(`Recognition error: ${event.error}, attempting restart`);
-        setTimeout(() => {
-          if (this.isListening) {
-            this.stop();
-            this.start(onResult, onTriggerPhrase);
-          }
-        }, 1000);
+        this.attemptRestart(onResult, onTriggerPhrase);
       }
     };
 
@@ -147,16 +146,7 @@ class VoiceRecognition {
       // If we're still supposed to be listening, restart
       if (this.isListening) {
         console.log('Restarting speech recognition...');
-        try {
-          setTimeout(() => {
-            if (this.isListening) {
-              this.recognition.start();
-            }
-          }, 500);
-        } catch (error) {
-          console.error('Error restarting speech recognition:', error);
-          this.isListening = false;
-        }
+        this.attemptRestart(onResult, onTriggerPhrase);
       }
     };
 
@@ -172,6 +162,34 @@ class VoiceRecognition {
       console.error('Failed to start voice recognition:', error);
       onResult("Failed to start voice recognition. Please try again.");
     }
+  }
+
+  attemptRestart(onResult: VoiceCallback, onTriggerPhrase?: TriggerCallback) {
+    if (this.restartCount >= this.maxRestarts) {
+      console.log(`Maximum restart attempts (${this.maxRestarts}) reached, giving up`);
+      this.isListening = false;
+      onResult("Voice recognition stopped due to too many errors. Please try again later.");
+      return;
+    }
+    
+    this.restartCount++;
+    setTimeout(() => {
+      if (this.isListening) {
+        try {
+          this.recognition.start();
+          console.log(`Speech recognition restarted (attempt ${this.restartCount}/${this.maxRestarts})`);
+        } catch (error) {
+          console.error('Error restarting speech recognition:', error);
+          // If we can't restart, try again after a delay
+          if (this.restartCount < this.maxRestarts) {
+            console.log('Will try to restart again in 1 second');
+            setTimeout(() => this.attemptRestart(onResult, onTriggerPhrase), 1000);
+          } else {
+            this.isListening = false;
+          }
+        }
+      }
+    }, 500);
   }
 
   stop() {
@@ -220,7 +238,7 @@ class VoiceRecognition {
     }
     
     // If more than 70% of words match, consider it a match
-    return matchCount >= phraseWords.length * 0.7;
+    return matchCount >= phraseWords.length * 0.6; // Lower threshold for better matching
   }
   
   // Simple word similarity check
@@ -232,9 +250,9 @@ class VoiceRecognition {
     if (word1.includes(word2) || word2.includes(word1)) return true;
     
     // Levenshtein distance (simple version)
-    if (word1.length > 3 && word2.length > 3) {
+    if (word1.length > 2 && word2.length > 2) {
       // For longer words, allow more differences
-      const maxDistance = Math.floor(Math.max(word1.length, word2.length) * 0.3);
+      const maxDistance = Math.floor(Math.max(word1.length, word2.length) * 0.4); // More tolerance
       return this.levenshteinDistance(word1, word2) <= maxDistance;
     }
     
@@ -311,8 +329,18 @@ class WebSpeechSynthesis {
       // Log before speaking to help with debugging
       console.log(`Speaking with Web Speech API: "${text}"`);
       window.speechSynthesis.speak(utterance);
+      
+      // Return a promise that resolves when speech is done
+      return new Promise<void>((resolve) => {
+        utterance.onend = () => {
+          resolve();
+        };
+        // Fallback in case onend doesn't fire
+        setTimeout(resolve, text.length * 100);
+      });
     } else {
       console.error('Speech synthesis not supported');
+      return Promise.resolve();
     }
   }
 }
@@ -353,15 +381,23 @@ class ElevenLabsSynthesis {
       const audio = new Audio(audioSrc);
       
       console.log("Playing ElevenLabs audio...");
-      await audio.play();
       
-      return audio;
+      // Return a promise that resolves when audio is done playing
+      return new Promise<void>((resolve, reject) => {
+        audio.onended = () => {
+          resolve();
+        };
+        audio.onerror = (err) => {
+          reject(err);
+        };
+        audio.play().catch(reject);
+      });
     } catch (error) {
       console.error('Error using ElevenLabs TTS:', error);
       // Fallback to browser TTS
       console.log('Falling back to Web Speech API...');
       const webSpeech = new WebSpeechSynthesis();
-      webSpeech.speak(text);
+      return webSpeech.speak(text);
     }
   }
 }
@@ -380,10 +416,10 @@ export const voiceSynthesis = {
         return await elevenLabsSynthesis.speak(text, voiceId);
       } catch (error) {
         console.error('ElevenLabs failed, falling back to Web Speech API', error);
-        webSpeechSynthesis.speak(text);
+        return webSpeechSynthesis.speak(text);
       }
     } else {
-      webSpeechSynthesis.speak(text);
+      return webSpeechSynthesis.speak(text);
     }
   }
 };
