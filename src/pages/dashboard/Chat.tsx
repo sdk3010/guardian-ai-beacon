@@ -23,6 +23,7 @@ export default function Chat() {
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const { user } = useAuth();
   const { toast } = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -94,13 +95,42 @@ export default function Chat() {
         console.error('Error saving user message:', userMsgError);
       }
       
-      // Make API call for response using axios
-      const response = await ai.chat(userInput);
+      // Make API call for response using axios with retry logic
+      let response;
+      try {
+        response = await ai.chat(userInput);
+      } catch (chatError) {
+        console.error('Initial chat attempt failed:', chatError);
+        
+        // If we haven't exceeded retry limit, try again
+        if (retryCount < 2) {
+          setRetryCount(prev => prev + 1);
+          toast({
+            title: "Retrying connection",
+            description: "Trying to reconnect to AI assistant...",
+          });
+          
+          // Wait a short delay before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          try {
+            response = await ai.chat(userInput);
+          } catch (retryError) {
+            console.error('Retry attempt failed:', retryError);
+            throw retryError;
+          }
+        } else {
+          throw chatError;
+        }
+      }
+      
       console.log('AI response:', response);
       
       if (!response || !response.data) {
         throw new Error('No response from AI assistant');
       }
+      
+      // Reset retry count on successful response
+      setRetryCount(0);
       
       const aiMessage: ChatMessage = {
         message: response.data.message || "I'm having trouble understanding. Could you rephrase that?",

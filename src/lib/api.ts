@@ -1,4 +1,3 @@
-
 import axios from 'axios';
 
 const API_BASE_URL = 'https://guardianai-backend.sdk3010.repl.co';
@@ -75,7 +74,7 @@ export const tracking = {
     api.get('/map/safe-places', { params: location }),
 };
 
-// AI chatbot API with better error handling
+// AI chatbot API with better error handling and retry logic
 export const ai = {
   chat: async (message: string, conversationId?: string) => {
     try {
@@ -90,7 +89,7 @@ export const ai = {
             'Content-Type': 'application/json',
             'x-api-key': API_KEY
           },
-          timeout: 20000  // 20 seconds timeout
+          timeout: 30000  // 30 seconds timeout for more reliability
         }
       );
       
@@ -98,6 +97,17 @@ export const ai = {
       return response;
     } catch (error) {
       console.error('AI chat error:', error);
+      // More detailed error handling to debug issues
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          console.error('Error response data:', error.response.data);
+          console.error('Error response status:', error.response.status);
+        } else if (error.request) {
+          console.error('No response received:', error.request);
+        } else {
+          console.error('Error setting up request:', error.message);
+        }
+      }
       throw error;
     }
   },
@@ -107,6 +117,27 @@ export const ai = {
     
   search: (query: string) => 
     api.post('/ai/search', { query }),
+    
+  // New method to get Indian cities
+  getIndianCities: async (state?: string, sort?: string) => {
+    try {
+      let url = 'https://indian-cities-api-nocbegfhqg.now.sh/cities';
+      
+      // Add query parameters if provided
+      if (state || sort) {
+        url += '?';
+        if (state) url += `state=${encodeURIComponent(state)}`;
+        if (state && sort) url += '&';
+        if (sort) url += `sort=${encodeURIComponent(sort)}`;
+      }
+      
+      const response = await axios.get(url);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching Indian cities:', error);
+      throw error;
+    }
+  }
 };
 
 export default api;

@@ -1,12 +1,29 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
-import { MapPin, Clock, AlertTriangle, Trash2 } from "lucide-react";
-import { useAuth } from '@/context/AuthContext';
+
+import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import {
+import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/hooks/use-toast';
+import { 
+  Card, 
+  CardContent, 
+  CardDescription, 
+  CardHeader, 
+  CardTitle 
+} from '@/components/ui/card';
+import { 
+  Tabs, 
+  TabsContent, 
+  TabsList, 
+  TabsTrigger 
+} from '@/components/ui/tabs';
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from '@/components/ui/select';
+import { 
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -17,247 +34,631 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { format, isToday, isYesterday, parseISO, subDays } from 'date-fns';
+import { Calendar as CalendarIcon, Eye, Filter, MapPin, MessageCircle, AlertTriangle } from 'lucide-react';
 
-interface AlertItem {
+interface TrackingRecord {
   id: string;
-  timestamp: string;
-  type: string;
+  user_id: string;
   location: {
     lat: number;
     lng: number;
   };
-  status: 'active' | 'resolved';
-  message?: string;
+  timestamp: string;
+  address?: string;
+  status?: string;
 }
 
-export default function History() {
-  const { toast } = useToast();
-  const { user } = useAuth();
-  const [alertHistory, setAlertHistory] = useState<AlertItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isDeletingAlert, setIsDeletingAlert] = useState<string | null>(null);
-  const [error, setError] = useState('');
+interface ChatMessage {
+  id: string;
+  user_id: string;
+  message: string;
+  is_user: boolean;
+  created_at: string;
+}
 
-  useEffect(() => {
-    if (user) {
-      loadAlerts();
-    }
-  }, [user]);
-
-  const loadAlerts = async () => {
-    if (!user) return;
-    
-    setError('');
-    try {
-      console.log('Fetching alerts for user ID:', user.id);
-      
-      const { data, error: fetchError } = await supabase
-        .from('alerts')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-      
-      if (fetchError) throw fetchError;
-      
-      const formattedAlerts = data?.map(alert => ({
-        id: alert.id,
-        timestamp: alert.created_at,
-        type: alert.type || 'emergency',
-        location: {
-          lat: alert.latitude || 0,
-          lng: alert.longitude || 0,
-        },
-        status: alert.status as 'active' | 'resolved',
-        message: alert.message
-      })) || [];
-      
-      console.log('Loaded alerts:', formattedAlerts);
-      setAlertHistory(formattedAlerts);
-    } catch (err: any) {
-      console.error('Error loading alerts:', err);
-      setError(err.message || 'Failed to load alert history');
-    } finally {
-      setIsLoading(false);
-    }
+interface AlertRecord {
+  id: string;
+  user_id: string;
+  message?: string;
+  location?: {
+    lat: number;
+    lng: number;
   };
+  created_at: string;
+  status?: string;
+  type?: string;
+}
 
-  const handleDeleteAlert = async (id: string) => {
+type HistoryType = 'all' | 'tracking' | 'chat' | 'alerts';
+type TimeFilter = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom';
+
+export default function History() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [trackingHistory, setTrackingHistory] = useState<TrackingRecord[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [alertHistory, setAlertHistory] = useState<AlertRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [historyType, setHistoryType] = useState<HistoryType>('all');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
+  const [customStartDate, setCustomStartDate] = useState<Date | undefined>(subDays(new Date(), 7));
+  const [customEndDate, setCustomEndDate] = useState<Date | undefined>(new Date());
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  // Fetch history data
+  useEffect(() => {
     if (!user) return;
     
-    setIsDeletingAlert(id);
-    try {
-      const { error: deleteError } = await supabase
-        .from('alerts')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id);
-      
-      if (deleteError) throw deleteError;
-      
-      setAlertHistory(prev => prev.filter(alert => alert.id !== id));
-      toast({
-        title: "Alert Deleted",
-        description: "Alert has been removed from your history",
-      });
-    } catch (err: any) {
-      console.error('Error deleting alert:', err);
-      setError(err.message || 'Failed to delete alert');
-      toast({
-        variant: "destructive",
-        title: "Failed to Delete",
-        description: "Could not delete the alert. Please try again.",
-      });
-    } finally {
-      setIsDeletingAlert(null);
-    }
+    const fetchHistory = async () => {
+      setLoading(true);
+      try {
+        // Get date filter
+        let startDate: Date | null = null;
+        const now = new Date();
+        
+        switch (timeFilter) {
+          case 'today':
+            startDate = new Date(now.setHours(0, 0, 0, 0));
+            break;
+          case 'yesterday':
+            startDate = subDays(new Date(now.setHours(0, 0, 0, 0)), 1);
+            break;
+          case 'week':
+            startDate = subDays(new Date(), 7);
+            break;
+          case 'month':
+            startDate = subDays(new Date(), 30);
+            break;
+          case 'custom':
+            startDate = customStartDate || null;
+            break;
+          default:
+            startDate = null;
+        }
+        
+        const startTimestamp = startDate ? startDate.toISOString() : null;
+        const endTimestamp = timeFilter === 'custom' && customEndDate 
+          ? new Date(customEndDate.setHours(23, 59, 59, 999)).toISOString() 
+          : null;
+        
+        // Fetch data based on selected history type
+        if (historyType === 'all' || historyType === 'tracking') {
+          let query = supabase
+            .from('tracking_history')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('timestamp', { ascending: false });
+            
+          if (startTimestamp) {
+            query = query.gte('timestamp', startTimestamp);
+          }
+          
+          if (endTimestamp) {
+            query = query.lte('timestamp', endTimestamp);
+          }
+          
+          const { data, error } = await query;
+          
+          if (error) throw error;
+          setTrackingHistory(data || []);
+        }
+        
+        if (historyType === 'all' || historyType === 'chat') {
+          let query = supabase
+            .from('chat_history')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false });
+            
+          if (startTimestamp) {
+            query = query.gte('created_at', startTimestamp);
+          }
+          
+          if (endTimestamp) {
+            query = query.lte('created_at', endTimestamp);
+          }
+          
+          const { data, error } = await query;
+          
+          if (error) throw error;
+          setChatHistory(data || []);
+        }
+        
+        if (historyType === 'all' || historyType === 'alerts') {
+          let query = supabase
+            .from('alerts_history')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false });
+            
+          if (startTimestamp) {
+            query = query.gte('created_at', startTimestamp);
+          }
+          
+          if (endTimestamp) {
+            query = query.lte('created_at', endTimestamp);
+          }
+          
+          const { data, error } = await query;
+          
+          if (error) throw error;
+          setAlertHistory(data || []);
+        }
+      } catch (error) {
+        console.error('Error fetching history:', error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to load history data."
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchHistory();
+  }, [user, historyType, timeFilter, customStartDate, customEndDate, toast]);
+
+  const handleViewDetails = (item: any, type: string) => {
+    setSelectedItem({ ...item, type });
+    setIsDialogOpen(true);
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
-  };
-
-  const getAlertTypeIcon = (type: string) => {
-    switch (type.toLowerCase()) {
-      case 'emergency':
-        return <AlertTriangle className="h-5 w-5 text-red-500" />;
-      case 'voice':
-        return <AlertTriangle className="h-5 w-5 text-orange-500" />;
-      default:
-        return <AlertTriangle className="h-5 w-5 text-primary" />;
+    const date = parseISO(dateString);
+    if (isToday(date)) {
+      return `Today, ${format(date, 'h:mm a')}`;
+    } else if (isYesterday(date)) {
+      return `Yesterday, ${format(date, 'h:mm a')}`;
+    } else {
+      return format(date, 'MMM d, yyyy - h:mm a');
     }
   };
 
-  if (!user) {
-    return (
-      <div className="p-4 md:p-6 max-w-4xl mx-auto">
-        <Card>
-          <CardContent className="py-10 text-center">
-            <AlertTriangle className="h-10 w-10 text-destructive mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
-            <p className="text-muted-foreground">
-              You need to be logged in to view your alert history.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-2xl flex items-center">
-            <Clock className="mr-2 h-5 w-5" />
-            Alert History
+    <div className="p-4 bg-[#1A1F2C] min-h-full">
+      <Card className="bg-[#232836] border-[#9b87f5]/20">
+        <CardHeader>
+          <CardTitle className="text-white flex items-center gap-2">
+            <Filter className="h-5 w-5 text-[#9b87f5]" />
+            History
           </CardTitle>
+          <CardDescription className="text-[#F1F0FB]/70">
+            View your past activities, chats, and alerts
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {error && (
-            <Alert variant="destructive" className="mb-6">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading your alert history...</div>
-          ) : alertHistory.length === 0 ? (
-            <div className="text-center py-10 border-2 border-dashed rounded-lg">
-              <div className="flex flex-col items-center justify-center space-y-3">
-                <div className="rounded-full bg-primary/10 p-3">
-                  <Clock className="h-8 w-8 text-primary" />
-                </div>
-                <h3 className="text-lg font-medium">No Alert History</h3>
-                <p className="text-sm text-muted-foreground max-w-sm">
-                  You haven't triggered any alerts yet. Your safety events will appear here when they occur.
-                </p>
+          <div className="flex flex-col space-y-4 md:flex-row md:space-y-0 md:space-x-4 mb-6">
+            <div className="md:w-1/2">
+              <label className="text-sm text-[#F1F0FB]/70 mb-2 block">Show:</label>
+              <Select value={historyType} onValueChange={(value) => setHistoryType(value as HistoryType)}>
+                <SelectTrigger className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                  <SelectValue placeholder="Select history type" />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                  <SelectItem value="all">All History</SelectItem>
+                  <SelectItem value="tracking">Tracking History</SelectItem>
+                  <SelectItem value="chat">Chat History</SelectItem>
+                  <SelectItem value="alerts">Alert History</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="md:w-1/2">
+              <label className="text-sm text-[#F1F0FB]/70 mb-2 block">Time Period:</label>
+              <Select value={timeFilter} onValueChange={(value) => setTimeFilter(value as TimeFilter)}>
+                <SelectTrigger className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                  <SelectValue placeholder="Select time filter" />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                  <SelectItem value="all">All Time</SelectItem>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="yesterday">Yesterday</SelectItem>
+                  <SelectItem value="week">Last 7 Days</SelectItem>
+                  <SelectItem value="month">Last 30 Days</SelectItem>
+                  <SelectItem value="custom">Custom Range</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          
+          {timeFilter === 'custom' && (
+            <div className="flex flex-col md:flex-row gap-4 mb-6">
+              <div className="flex flex-col space-y-2">
+                <label className="text-sm text-[#F1F0FB]/70">Start Date:</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-start text-left font-normal bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {customStartDate ? format(customStartDate, 'PPP') : <span>Pick a date</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={customStartDate}
+                      onSelect={setCustomStartDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              
+              <div className="flex flex-col space-y-2">
+                <label className="text-sm text-[#F1F0FB]/70">End Date:</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-start text-left font-normal bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {customEndDate ? format(customEndDate, 'PPP') : <span>Pick a date</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={customEndDate}
+                      onSelect={setCustomEndDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {alertHistory.map((alert) => (
-                <div 
-                  key={alert.id} 
-                  className={`border rounded-lg overflow-hidden ${
-                    alert.status === 'active' ? 'border-red-200 bg-red-50' : ''
-                  }`}
-                >
-                  <div className="p-4">
-                    <div className="flex flex-wrap justify-between items-start mb-2 gap-2">
-                      <div className="flex items-center">
-                        {getAlertTypeIcon(alert.type)}
-                        <h3 className="font-medium ml-2">
-                          {alert.type.charAt(0).toUpperCase() + alert.type.slice(1)} Alert
-                        </h3>
-                        <span className={`ml-3 px-2 py-0.5 rounded-full text-xs ${
-                          alert.status === 'resolved' 
-                            ? 'bg-green-100 text-green-700' 
-                            : 'bg-red-100 text-red-700'
-                        }`}>
-                          {alert.status === 'resolved' ? 'Resolved' : 'Active'}
-                        </span>
-                      </div>
-                      
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            className="h-8 px-2 text-destructive hover:bg-destructive/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Alert History</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure you want to delete this alert from your history? This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction 
-                              onClick={() => handleDeleteAlert(alert.id)}
-                              disabled={isDeletingAlert === alert.id}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            >
-                              {isDeletingAlert === alert.id ? 'Deleting...' : 'Delete'}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                    
-                    <div className="space-y-2 text-sm">
-                      <p className="text-muted-foreground flex items-center">
-                        <Clock className="h-3.5 w-3.5 mr-1.5" />
-                        {formatDate(alert.timestamp)}
-                      </p>
-                      
-                      {alert.message && (
-                        <p className="italic">"{alert.message}"</p>
-                      )}
-                      
-                      <p className="flex items-center text-muted-foreground">
-                        <MapPin className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
-                        Location: {alert.location.lat.toFixed(6)}, {alert.location.lng.toFixed(6)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
+          )}
+          
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#9b87f5]"></div>
             </div>
+          ) : (
+            <Tabs defaultValue="all" className="w-full">
+              <TabsList className="grid w-full grid-cols-3 bg-[#1A1F2C] text-white">
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="locations">Locations</TabsTrigger>
+                <TabsTrigger value="conversations">Conversations</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="all" className="mt-4">
+                {trackingHistory.length === 0 && chatHistory.length === 0 && alertHistory.length === 0 ? (
+                  <div className="text-center py-8 text-[#F1F0FB]/70">
+                    No history found for the selected filters.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {alertHistory.map(alert => (
+                      <Card key={alert.id} className="bg-[#1A1F2C] border-red-500/30 text-white">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="h-5 w-5 text-red-500 mt-1" />
+                              <div>
+                                <div className="font-medium">
+                                  {alert.type || 'Emergency'} Alert
+                                </div>
+                                <div className="text-sm text-[#F1F0FB]/70">
+                                  {formatDate(alert.created_at)}
+                                </div>
+                                {alert.message && (
+                                  <div className="mt-2 text-sm">{alert.message}</div>
+                                )}
+                              </div>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="border-[#9b87f5]/30 text-[#9b87f5]"
+                              onClick={() => handleViewDetails(alert, 'alert')}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View Details
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    
+                    {trackingHistory.map(record => (
+                      <Card key={record.id} className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-start gap-2">
+                              <MapPin className="h-5 w-5 text-[#9b87f5] mt-1" />
+                              <div>
+                                <div className="font-medium">
+                                  Location Tracked
+                                </div>
+                                <div className="text-sm text-[#F1F0FB]/70">
+                                  {formatDate(record.timestamp)}
+                                </div>
+                                {record.address && (
+                                  <div className="mt-2 text-sm">{record.address}</div>
+                                )}
+                                {!record.address && record.location && (
+                                  <div className="mt-2 text-sm">
+                                    {record.location.lat.toFixed(6)}, {record.location.lng.toFixed(6)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="border-[#9b87f5]/30 text-[#9b87f5]"
+                              onClick={() => handleViewDetails(record, 'tracking')}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View Details
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    
+                    {chatHistory.map(message => (
+                      <Card key={message.id} className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-start gap-2">
+                              <MessageCircle className="h-5 w-5 text-[#9b87f5] mt-1" />
+                              <div>
+                                <div className="font-medium">
+                                  {message.is_user ? 'You' : 'AI Assistant'}
+                                </div>
+                                <div className="text-sm text-[#F1F0FB]/70">
+                                  {formatDate(message.created_at)}
+                                </div>
+                                <div className="mt-2 text-sm line-clamp-2">
+                                  {message.message}
+                                </div>
+                              </div>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="border-[#9b87f5]/30 text-[#9b87f5]"
+                              onClick={() => handleViewDetails(message, 'chat')}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View Full
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="locations" className="mt-4">
+                {trackingHistory.length === 0 && alertHistory.length === 0 ? (
+                  <div className="text-center py-8 text-[#F1F0FB]/70">
+                    No location history found for the selected filters.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {alertHistory.filter(alert => alert.location).map(alert => (
+                      <Card key={alert.id} className="bg-[#1A1F2C] border-red-500/30 text-white">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="h-5 w-5 text-red-500 mt-1" />
+                              <div>
+                                <div className="font-medium">
+                                  Emergency Alert Location
+                                </div>
+                                <div className="text-sm text-[#F1F0FB]/70">
+                                  {formatDate(alert.created_at)}
+                                </div>
+                                {alert.location && (
+                                  <div className="mt-2 text-sm">
+                                    {alert.location.lat.toFixed(6)}, {alert.location.lng.toFixed(6)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="border-[#9b87f5]/30 text-[#9b87f5]"
+                              onClick={() => handleViewDetails(alert, 'alert')}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View Details
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    
+                    {trackingHistory.map(record => (
+                      <Card key={record.id} className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-start gap-2">
+                              <MapPin className="h-5 w-5 text-[#9b87f5] mt-1" />
+                              <div>
+                                <div className="font-medium">
+                                  Location Tracked
+                                </div>
+                                <div className="text-sm text-[#F1F0FB]/70">
+                                  {formatDate(record.timestamp)}
+                                </div>
+                                {record.address && (
+                                  <div className="mt-2 text-sm">{record.address}</div>
+                                )}
+                                {!record.address && record.location && (
+                                  <div className="mt-2 text-sm">
+                                    {record.location.lat.toFixed(6)}, {record.location.lng.toFixed(6)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="border-[#9b87f5]/30 text-[#9b87f5]"
+                              onClick={() => handleViewDetails(record, 'tracking')}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View on Map
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="conversations" className="mt-4">
+                {chatHistory.length === 0 ? (
+                  <div className="text-center py-8 text-[#F1F0FB]/70">
+                    No conversation history found for the selected filters.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {chatHistory.map(message => (
+                      <Card key={message.id} className="bg-[#1A1F2C] border-[#9b87f5]/30 text-white">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-start gap-2">
+                              <MessageCircle className="h-5 w-5 text-[#9b87f5] mt-1" />
+                              <div>
+                                <div className="font-medium">
+                                  {message.is_user ? 'You' : 'AI Assistant'}
+                                </div>
+                                <div className="text-sm text-[#F1F0FB]/70">
+                                  {formatDate(message.created_at)}
+                                </div>
+                                <div className="mt-2 text-sm">
+                                  {message.message}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
           )}
         </CardContent>
       </Card>
+      
+      <AlertDialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <AlertDialogContent className="bg-[#1A1F2C] text-white border-[#9b87f5]/30">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {selectedItem?.type === 'tracking' ? 'Location Details' : 
+               selectedItem?.type === 'chat' ? 'Conversation Details' : 
+               'Alert Details'}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[#F1F0FB]/70">
+              {selectedItem?.timestamp || selectedItem?.created_at ? 
+                formatDate(selectedItem?.timestamp || selectedItem?.created_at) : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="py-4">
+            {selectedItem?.type === 'tracking' && (
+              <div className="space-y-4">
+                {selectedItem?.address && (
+                  <div>
+                    <h4 className="text-sm font-medium text-[#9b87f5]">Address</h4>
+                    <p className="text-[#F1F0FB]">{selectedItem.address}</p>
+                  </div>
+                )}
+                
+                {selectedItem?.location && (
+                  <div>
+                    <h4 className="text-sm font-medium text-[#9b87f5]">Coordinates</h4>
+                    <p className="text-[#F1F0FB]">
+                      Latitude: {selectedItem.location.lat.toFixed(6)}<br />
+                      Longitude: {selectedItem.location.lng.toFixed(6)}
+                    </p>
+                  </div>
+                )}
+                
+                {selectedItem?.status && (
+                  <div>
+                    <h4 className="text-sm font-medium text-[#9b87f5]">Status</h4>
+                    <p className="text-[#F1F0FB]">{selectedItem.status}</p>
+                  </div>
+                )}
+                
+                <div className="h-48 md:h-64 bg-[#282c3a] rounded-md flex items-center justify-center">
+                  <div className="text-[#F1F0FB]/70">Map placeholder</div>
+                </div>
+              </div>
+            )}
+            
+            {selectedItem?.type === 'chat' && (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-sm font-medium text-[#9b87f5]">From</h4>
+                  <p className="text-[#F1F0FB]">{selectedItem?.is_user ? 'You' : 'AI Assistant'}</p>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-medium text-[#9b87f5]">Message</h4>
+                  <p className="text-[#F1F0FB] whitespace-pre-wrap">{selectedItem?.message}</p>
+                </div>
+              </div>
+            )}
+            
+            {selectedItem?.type === 'alert' && (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-sm font-medium text-[#9b87f5]">Alert Type</h4>
+                  <p className="text-[#F1F0FB]">{selectedItem?.type || 'Emergency'}</p>
+                </div>
+                
+                {selectedItem?.message && (
+                  <div>
+                    <h4 className="text-sm font-medium text-[#9b87f5]">Message</h4>
+                    <p className="text-[#F1F0FB]">{selectedItem.message}</p>
+                  </div>
+                )}
+                
+                {selectedItem?.location && (
+                  <div>
+                    <h4 className="text-sm font-medium text-[#9b87f5]">Location</h4>
+                    <p className="text-[#F1F0FB]">
+                      Latitude: {selectedItem.location.lat.toFixed(6)}<br />
+                      Longitude: {selectedItem.location.lng.toFixed(6)}
+                    </p>
+                    
+                    <div className="h-48 md:h-64 mt-4 bg-[#282c3a] rounded-md flex items-center justify-center">
+                      <div className="text-[#F1F0FB]/70">Map placeholder</div>
+                    </div>
+                  </div>
+                )}
+                
+                {selectedItem?.status && (
+                  <div>
+                    <h4 className="text-sm font-medium text-[#9b87f5]">Status</h4>
+                    <p className="text-[#F1F0FB]">{selectedItem.status}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-transparent text-[#F1F0FB] border-[#9b87f5]/30 hover:bg-[#9b87f5]/10">
+              Close
+            </AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
