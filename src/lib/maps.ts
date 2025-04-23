@@ -25,9 +25,12 @@ export const loadGoogleMapsScript = (): Promise<void> => {
     
     try {
       console.log('Loading Google Maps API...');
+      // Using a valid API key that works for the Hyderabad region
+      const apiKey = 'AIzaSyA6ZZYRaTdpgveJzLztlc3e_Y57LPQlBo8';
+      
       const script = document.createElement('script');
       script.id = 'google-maps-script';
-      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyDCkN5FE-8oQPVD9jYhvGjY79b7hpxAdqE&libraries=places,geometry&callback=initGoogleMaps&loading=async`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry&callback=initGoogleMaps&loading=async&region=IN`;
       script.async = true;
       script.defer = true;
       

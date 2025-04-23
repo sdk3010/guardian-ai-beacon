@@ -127,7 +127,7 @@ export default function History() {
           ? new Date(customEndDate.setHours(23, 59, 59, 999)).toISOString() 
           : null;
         
-        // Fetch data based on selected history type
+        // Fetch tracking history
         if (historyType === 'all' || historyType === 'tracking') {
           let query = supabase
             .from('location_points')
@@ -148,18 +148,34 @@ export default function History() {
           if (error) throw error;
           
           // Convert to TrackingRecord format
-          const trackingRecords: TrackingRecord[] = (data || []).map(point => ({
-            id: point.id,
-            user_id: point.user_id,
-            location: point.location,
-            timestamp: point.timestamp,
-            address: undefined,
-            status: undefined
-          }));
+          const trackingRecords: TrackingRecord[] = (data || []).map(point => {
+            // Parse location data from JSONB
+            let locationData: { lat: number; lng: number } = { lat: 0, lng: 0 };
+            
+            try {
+              if (typeof point.location === 'string') {
+                locationData = JSON.parse(point.location);
+              } else if (point.location && typeof point.location === 'object') {
+                locationData = point.location as { lat: number; lng: number };
+              }
+            } catch (e) {
+              console.error('Error parsing location data:', e);
+            }
+            
+            return {
+              id: point.id,
+              user_id: point.user_id,
+              location: locationData,
+              timestamp: point.timestamp,
+              address: undefined,
+              status: undefined
+            };
+          });
           
           setTrackingHistory(trackingRecords);
         }
         
+        // Fetch chat history
         if (historyType === 'all' || historyType === 'chat') {
           let query = supabase
             .from('chat_history')
@@ -181,6 +197,7 @@ export default function History() {
           setChatHistory(data || []);
         }
         
+        // Fetch alert history
         if (historyType === 'all' || historyType === 'alerts') {
           let query = supabase
             .from('alerts')
