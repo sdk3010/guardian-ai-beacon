@@ -3,8 +3,6 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MapPin, Navigation, Clock, Share2, AlertTriangle, Search, Mic, Volume2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -13,6 +11,7 @@ import { TrackingService, type TrackingSession, type LocationPoint } from '@/ser
 import { loadGoogleMapsScript, initMap } from '@/lib/maps';
 import VoiceAssistant from '@/components/voice/VoiceAssistant';
 import { voiceSynthesis } from '@/lib/voice';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 export default function Tracking() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -30,8 +29,11 @@ export default function Tracking() {
   const [trackingSession, setTrackingSession] = useState<TrackingSession | null>(null);
   const [safetyScore, setSafetyScore] = useState(85);
   const [safetyStatus, setSafetyStatus] = useState("Safe");
-  const [nearbyPlaces, setNearbyPlaces] = useState<Array<{name: string, type: string, distance: number}>>([]);
+  const [nearbyPlaces, setNearbyPlaces] = useState<Array<{id: string, name: string, type: string, distance: number, lat: number, lng: number}>>([]);
   const [isMuted, setIsMuted] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<TrackingSession | null>(null);
+  const [sessionPoints, setSessionPoints] = useState<LocationPoint[]>([]);
+  const [showSessionDialog, setShowSessionDialog] = useState(false);
   
   // Initialize Google Maps
   useEffect(() => {
@@ -39,79 +41,35 @@ export default function Tracking() {
     
     const initializeMap = async () => {
       try {
-        // Load Google Maps API
-        await loadGoogleMapsScript();
-        
         // Default location (San Francisco)
         const defaultLocation = { lat: 37.7749, lng: -122.4194 };
         
-        const mapInstance = new window.google.maps.Map(mapRef.current!, {
-          center: currentLocation || defaultLocation,
-          zoom: 15,
-          mapTypeControl: false,
-          fullscreenControl: false,
-          streetViewControl: false,
-          zoomControl: true,
-        });
-        
-        setMap(mapInstance);
-        
-        // Initialize geocoder
-        geocoderRef.current = new window.google.maps.Geocoder();
+        setIsLoading(true);
         
         // Try to get user's current location
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
-            (position) => {
+            async (position) => {
               const pos = {
                 lat: position.coords.latitude,
                 lng: position.coords.longitude,
               };
               
               setCurrentLocation(pos);
-              mapInstance.setCenter(pos);
               
-              // Create marker at current location
-              const newMarker = new window.google.maps.Marker({
-                position: pos,
-                map: mapInstance,
-                title: 'Your Location',
-                animation: window.google.maps.Animation.DROP,
-                icon: {
-                  path: window.google.maps.SymbolPath.CIRCLE,
-                  scale: 10,
-                  fillColor: '#4285F4',
-                  fillOpacity: 1,
-                  strokeColor: '#ffffff',
-                  strokeWeight: 2,
-                },
-              });
-              
-              setMarker(newMarker);
-              
-              // Reverse geocode to get address
-              if (geocoderRef.current) {
-                geocoderRef.current.geocode({ location: pos }, (results, status) => {
-                  if (status === 'OK' && results && results[0]) {
-                    const address = results[0].formatted_address;
-                    
-                    // Create info window with address
-                    const infoWindow = new window.google.maps.InfoWindow({
-                      content: `<div><strong>Your Location</strong><br/>${address}</div>`,
-                    });
-                    
-                    infoWindow.open(mapInstance, newMarker);
-                    
-                    // Close info window after 5 seconds
-                    setTimeout(() => {
-                      infoWindow.close();
-                    }, 5000);
-                  }
-                });
+              // Initialize map with the location
+              const newMap = await initMap(mapRef, pos, nearbyPlaces);
+              if (newMap) {
+                setMap(newMap);
+                
+                // Initialize geocoder
+                geocoderRef.current = new google.maps.Geocoder();
+                
+                // Find nearby safe places
+                findNearbySafePlaces(pos);
               }
               
-              // Find nearby safe places
-              findNearbySafePlaces(pos);
+              setIsLoading(false);
             },
             (error) => {
               console.error('Error getting location:', error);
@@ -120,8 +78,43 @@ export default function Tracking() {
                 title: "Location Error",
                 description: `Could not get your location: ${error.message}`,
               });
+              
+              // Initialize with default location if we can't get the user's location
+              initMap(mapRef, defaultLocation, [])
+                .then(newMap => {
+                  if (newMap) {
+                    setMap(newMap);
+                    setCurrentLocation(defaultLocation);
+                    geocoderRef.current = new google.maps.Geocoder();
+                  }
+                  setIsLoading(false);
+                })
+                .catch(err => {
+                  console.error('Error initializing map with default location:', err);
+                  setIsLoading(false);
+                });
+            },
+            { 
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 0
             }
           );
+        } else {
+          // Browser doesn't support Geolocation
+          initMap(mapRef, defaultLocation, [])
+            .then(newMap => {
+              if (newMap) {
+                setMap(newMap);
+                setCurrentLocation(defaultLocation);
+                geocoderRef.current = new google.maps.Geocoder();
+              }
+              setIsLoading(false);
+            })
+            .catch(err => {
+              console.error('Error initializing map with default location:', err);
+              setIsLoading(false);
+            });
         }
       } catch (error) {
         console.error('Error initializing map:', error);
@@ -130,6 +123,7 @@ export default function Tracking() {
           title: "Map Error",
           description: "Could not initialize map. Please try refreshing the page.",
         });
+        setIsLoading(false);
       }
     };
     
@@ -147,8 +141,10 @@ export default function Tracking() {
     if (!user) return;
     
     try {
+      setIsLoading(true);
       const history = await TrackingService.getTrackingHistory(user.id);
       setTrackingHistory(history);
+      setIsLoading(false);
     } catch (err) {
       console.error('Error loading tracking history:', err);
       toast({
@@ -156,26 +152,78 @@ export default function Tracking() {
         title: "Error",
         description: "Failed to load tracking history. Please try again.",
       });
+      setIsLoading(false);
     }
   };
 
   const findNearbySafePlaces = (location: {lat: number, lng: number}) => {
-    // Simulate finding nearby safe places
+    // Generate some realistic safe places around the location
     setTimeout(() => {
+      const radius = 0.01; // roughly 1 mile
       const mockPlaces = [
-        { name: "Downtown Police Station", type: "Police", distance: 0.8 },
-        { name: "City Hospital", type: "Hospital", distance: 1.2 },
-        { name: "Central Fire Department", type: "Fire Station", distance: 1.5 },
-        { name: "24/7 Pharmacy", type: "Pharmacy", distance: 0.3 },
+        { 
+          id: "place1",
+          name: "Downtown Police Station", 
+          type: "Police", 
+          distance: 0.8,
+          lat: location.lat + radius * Math.cos(0),
+          lng: location.lng + radius * Math.sin(0)
+        },
+        { 
+          id: "place2",
+          name: "City Hospital", 
+          type: "Hospital", 
+          distance: 1.2,
+          lat: location.lat + radius * Math.cos(Math.PI/2),
+          lng: location.lng + radius * Math.sin(Math.PI/2)
+        },
+        { 
+          id: "place3",
+          name: "Central Fire Department", 
+          type: "Fire Station", 
+          distance: 1.5,
+          lat: location.lat + radius * Math.cos(Math.PI),
+          lng: location.lng + radius * Math.sin(Math.PI)
+        },
+        { 
+          id: "place4",
+          name: "24/7 Pharmacy", 
+          type: "Pharmacy", 
+          distance: 0.3,
+          lat: location.lat + radius * Math.cos(3*Math.PI/2),
+          lng: location.lng + radius * Math.sin(3*Math.PI/2)
+        },
       ];
+      
       setNearbyPlaces(mockPlaces);
-    }, 2000);
+      
+      // Update map with safe places if it exists
+      if (map && mapRef.current && currentLocation) {
+        initMap(mapRef, currentLocation, mockPlaces)
+          .then(newMap => {
+            if (newMap) {
+              setMap(newMap);
+            }
+          })
+          .catch(err => {
+            console.error('Error updating map with safe places:', err);
+          });
+      }
+    }, 1500);
   };
   
   const handleStartTracking = async () => {
-    if (!user || !currentLocation) return;
+    if (!user || !currentLocation) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not determine your location or you're not logged in.",
+      });
+      return;
+    }
 
     try {
+      setIsLoading(true);
       const session = await TrackingService.createSession(user.id, currentLocation);
       setTrackingSession(session);
       setIsTracking(true);
@@ -201,6 +249,8 @@ export default function Tracking() {
       if (!isMuted) {
         voiceSynthesis.speak("Tracking started. Your location is now being monitored for safety.");
       }
+      
+      setIsLoading(false);
     } catch (error) {
       console.error('Error starting tracking:', error);
       toast({
@@ -208,13 +258,22 @@ export default function Tracking() {
         title: "Error",
         description: "Could not start tracking. Please try again.",
       });
+      setIsLoading(false);
     }
   };
 
   const handleStopTracking = async () => {
-    if (!watchId || !trackingSession || !currentLocation) return;
+    if (!watchId || !trackingSession || !currentLocation) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "No active tracking session to stop.",
+      });
+      return;
+    }
 
     try {
+      setIsLoading(true);
       await TrackingService.endSession(trackingSession.id, currentLocation);
       
       navigator.geolocation.clearWatch(watchId);
@@ -233,6 +292,8 @@ export default function Tracking() {
       
       // Reload tracking history
       loadTrackingHistory();
+      
+      setIsLoading(false);
     } catch (error) {
       console.error('Error stopping tracking:', error);
       toast({
@@ -240,6 +301,7 @@ export default function Tracking() {
         title: "Error",
         description: "Could not stop tracking. Please try again.",
       });
+      setIsLoading(false);
     }
   };
 
@@ -283,7 +345,14 @@ export default function Tracking() {
   
   // Search for a location
   const searchLocation = () => {
-    if (!searchQuery.trim() || !map || !geocoderRef.current) return;
+    if (!searchQuery.trim() || !map || !geocoderRef.current) {
+      toast({
+        variant: "destructive",
+        title: "Search Error",
+        description: "Please enter a location to search.",
+      });
+      return;
+    }
     
     setIsLoading(true);
     
@@ -292,8 +361,12 @@ export default function Tracking() {
       
       if (status === 'OK' && results && results[0]) {
         const location = results[0].geometry.location;
+        const newPos = {
+          lat: location.lat(),
+          lng: location.lng()
+        };
         
-        map.setCenter(location);
+        map.setCenter(newPos);
         map.setZoom(15);
         
         // Create a new marker for the searched location
@@ -301,21 +374,24 @@ export default function Tracking() {
           marker.setMap(null);
         }
         
-        const newMarker = new window.google.maps.Marker({
-          position: location,
+        const newMarker = new google.maps.Marker({
+          position: newPos,
           map: map,
           title: results[0].formatted_address,
-          animation: window.google.maps.Animation.DROP,
+          animation: google.maps.Animation.DROP,
         });
         
         setMarker(newMarker);
         
         // Create info window with address
-        const infoWindow = new window.google.maps.InfoWindow({
+        const infoWindow = new google.maps.InfoWindow({
           content: `<div><strong>${results[0].formatted_address}</strong></div>`,
         });
         
         infoWindow.open(map, newMarker);
+        
+        // Update nearby places for the new location
+        findNearbySafePlaces(newPos);
       } else {
         toast({
           variant: "destructive",
@@ -399,6 +475,29 @@ export default function Tracking() {
     }).format(date);
   };
   
+  // View session details
+  const viewSessionDetails = async (session: TrackingSession) => {
+    try {
+      setSelectedSession(session);
+      setIsLoading(true);
+      
+      // Get location points for the session
+      const points = await TrackingService.getLocationPoints(session.id);
+      setSessionPoints(points);
+      
+      setShowSessionDialog(true);
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error loading session details:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not load session details. Please try again.",
+      });
+      setIsLoading(false);
+    }
+  };
+  
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto bg-[#1A1F2C] text-white">
       <div className="flex justify-between items-center mb-6">
@@ -410,6 +509,7 @@ export default function Tracking() {
           <Button
             variant={isTracking ? "destructive" : "default"}
             onClick={isTracking ? handleStopTracking : handleStartTracking}
+            disabled={isLoading}
             className={isTracking ? "" : "bg-[#9b87f5] hover:bg-[#8a76e4]"}
           >
             {isTracking ? "Stop Tracking" : "Start Tracking"}
@@ -446,7 +546,14 @@ export default function Tracking() {
                     <div 
                       ref={mapRef} 
                       className="w-full h-[400px] rounded-md overflow-hidden border border-gray-700"
-                    ></div>
+                    >
+                      {isLoading && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-[#1A1F2C]/80 z-10">
+                          <div className="animate-spin mr-2 h-6 w-6 border-t-2 border-[#9b87f5] border-r-2 rounded-full"></div>
+                          <span className="text-[#F1F0FB]">Loading map...</span>
+                        </div>
+                      )}
+                    </div>
                     
                     <div className="absolute top-4 left-4 right-4">
                       <div className="flex gap-2 bg-[#1A1F2C]/90 backdrop-blur-sm p-2 rounded-md border border-gray-700 shadow-sm">
@@ -473,6 +580,7 @@ export default function Tracking() {
                   <Button
                     variant={isTracking ? "destructive" : "default"}
                     onClick={isTracking ? handleStopTracking : handleStartTracking}
+                    disabled={isLoading}
                     className={`flex items-center gap-2 ${isTracking ? "" : "bg-[#9b87f5] hover:bg-[#8a76e4]"}`}
                   >
                     {isTracking ? (
@@ -500,7 +608,7 @@ export default function Tracking() {
                         });
                       }
                     }}
-                    disabled={!currentLocation}
+                    disabled={!currentLocation || isLoading}
                     className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]"
                   >
                     <Share2 className="h-4 w-4" />
@@ -548,7 +656,7 @@ export default function Tracking() {
                   {nearbyPlaces.length > 0 ? (
                     <ul className="space-y-3">
                       {nearbyPlaces.map((place, index) => (
-                        <li key={index} className="flex justify-between border-b border-gray-700 pb-2">
+                        <li key={place.id || index} className="flex justify-between border-b border-gray-700 pb-2">
                           <div>
                             <p className="font-medium text-[#F1F0FB]">{place.name}</p>
                             <p className="text-sm text-gray-400">{place.type}</p>
@@ -582,7 +690,12 @@ export default function Tracking() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {trackingHistory.length > 0 ? (
+              {isLoading ? (
+                <div className="flex justify-center items-center py-10">
+                  <div className="animate-spin mr-2 h-6 w-6 border-t-2 border-[#9b87f5] border-r-2 rounded-full"></div>
+                  <span>Loading history...</span>
+                </div>
+              ) : trackingHistory.length > 0 ? (
                 <div className="space-y-4">
                   {trackingHistory.map((session) => (
                     <div key={session.id} className="flex items-center justify-between border-b border-gray-700 pb-4">
@@ -597,7 +710,13 @@ export default function Tracking() {
                           Status: <span className={session.status === 'active' ? 'text-green-500' : ''}>{session.status}</span>
                         </p>
                       </div>
-                      <Button variant="outline" size="sm" className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="flex items-center gap-2 border-[#9b87f5] text-[#9b87f5]"
+                        onClick={() => viewSessionDetails(session)}
+                        disabled={isLoading}
+                      >
                         <Clock className="h-4 w-4" />
                         View Details
                       </Button>
@@ -617,6 +736,88 @@ export default function Tracking() {
           </Card>
         </TabsContent>
       </Tabs>
+      
+      {/* Session Details Dialog */}
+      <Dialog open={showSessionDialog} onOpenChange={setShowSessionDialog}>
+        <DialogContent className="bg-[#232836] text-white border-[#9b87f5]/30 max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="text-[#F1F0FB]">
+              Session Details: {selectedSession?.id.substring(0, 8)}
+            </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              View detailed information about this tracking session
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <h3 className="text-sm font-medium text-gray-400">Started</h3>
+                <p className="text-[#F1F0FB]">{selectedSession ? formatDate(selectedSession.start_time) : ''}</p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-400">Ended</h3>
+                <p className="text-[#F1F0FB]">
+                  {selectedSession?.end_time ? formatDate(selectedSession.end_time) : 'Active'}
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-400">Status</h3>
+                <p className={`font-medium ${selectedSession?.status === 'active' ? 'text-green-500' : 'text-[#F1F0FB]'}`}>
+                  {selectedSession?.status.charAt(0).toUpperCase() + selectedSession?.status.slice(1)}
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-400">Location Points</h3>
+                <p className="text-[#F1F0FB]">{sessionPoints.length}</p>
+              </div>
+            </div>
+            
+            <div>
+              <h3 className="text-sm font-medium text-gray-400 mb-2">Location Timeline</h3>
+              <div className="border border-gray-700 rounded-md p-4 max-h-[300px] overflow-y-auto">
+                {sessionPoints.length > 0 ? (
+                  <div className="space-y-4">
+                    {sessionPoints.map((point, index) => (
+                      <div key={point.id} className="flex items-start border-b border-gray-700 pb-2">
+                        <div className="mr-4 mt-1">
+                          <div className="h-4 w-4 rounded-full bg-[#9b87f5]"></div>
+                          {index < sessionPoints.length - 1 && (
+                            <div className="h-full w-0.5 bg-gray-700 ml-2 mt-1"></div>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-400">
+                            {formatDate(point.timestamp)}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {point.location.lat.toFixed(6)}, {point.location.lng.toFixed(6)}
+                            {point.accuracy && ` (Accuracy: ${point.accuracy.toFixed(1)}m)`}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4 text-gray-400">
+                    <p>No location points recorded for this session</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="flex justify-end pt-4">
+              <Button 
+                variant="default" 
+                onClick={() => setShowSessionDialog(false)}
+                className="bg-[#9b87f5] hover:bg-[#8a76e4]"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

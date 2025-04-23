@@ -4,30 +4,49 @@
  */
 export const loadGoogleMapsScript = (): Promise<void> => {
   return new Promise<void>((resolve, reject) => {
-    if (window.google && window.google.maps) return resolve();
-    
-    if (document.getElementById('google-maps-script')) {
+    // Check if Google Maps is already loaded
+    if (window.google && window.google.maps) {
+      console.log('Google Maps already loaded');
       return resolve();
     }
     
-    const script = document.createElement('script');
-    script.id = 'google-maps-script';
-    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry&callback=initGoogleMaps`;
-    script.async = true;
-    script.defer = true;
+    // Check if script is already being loaded
+    if (document.getElementById('google-maps-script')) {
+      console.log('Google Maps script is already being loaded');
+      
+      // Create a listener for when the existing script finishes loading
+      window.initGoogleMaps = function() {
+        console.log('Google Maps API loaded successfully from existing script');
+        resolve();
+      };
+      
+      return;
+    }
     
-    // Define callback function
-    window.initGoogleMaps = function() {
-      console.log('Google Maps API loaded successfully');
-      resolve();
-    };
-    
-    script.onerror = (error) => {
-      console.error('Error loading Google Maps script:', error);
+    try {
+      console.log('Loading Google Maps API...');
+      const script = document.createElement('script');
+      script.id = 'google-maps-script';
+      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyC2jY46Jht0MIpfHNYwBftGTVVjfTmNAXk&libraries=places,geometry&callback=initGoogleMaps&loading=async`;
+      script.async = true;
+      script.defer = true;
+      
+      // Define callback function
+      window.initGoogleMaps = function() {
+        console.log('Google Maps API loaded successfully');
+        resolve();
+      };
+      
+      script.onerror = (error) => {
+        console.error('Error loading Google Maps script:', error);
+        reject(new Error('Failed to load Google Maps API'));
+      };
+      
+      document.head.appendChild(script);
+    } catch (error) {
+      console.error('Error setting up Google Maps:', error);
       reject(error);
-    };
-    
-    document.head.appendChild(script);
+    }
   });
 };
 
@@ -48,24 +67,30 @@ export const initMap = async (
     lng: number;
   }> = []
 ): Promise<google.maps.Map | null> => {
-  if (!mapContainerRef.current || !currentLocation) return null;
+  if (!mapContainerRef.current || !currentLocation) {
+    console.error('Map container or current location not available');
+    return null;
+  }
 
   try {
+    console.log('Initializing map with location:', currentLocation);
     await loadGoogleMapsScript();
     
-    const map = new window.google.maps.Map(mapContainerRef.current, {
+    const mapOptions: google.maps.MapOptions = {
       center: { lat: currentLocation.lat, lng: currentLocation.lng },
       zoom: 15,
       mapTypeControl: false,
       streetViewControl: false,
       fullscreenControl: false,
-    });
+    };
+    
+    const map = new google.maps.Map(mapContainerRef.current, mapOptions);
 
     // Add info window for current location
-    const infoWindow = new window.google.maps.InfoWindow();
+    const infoWindow = new google.maps.InfoWindow();
     
     // Try to get address for current location
-    const geocoder = new window.google.maps.Geocoder();
+    const geocoder = new google.maps.Geocoder();
     geocoder.geocode({ location: currentLocation }, (results, status) => {
       let locationName = "Your current location";
       
@@ -74,11 +99,11 @@ export const initMap = async (
       }
       
       // Add marker for current location
-      const marker = new window.google.maps.Marker({
+      const marker = new google.maps.Marker({
         position: { lat: currentLocation.lat, lng: currentLocation.lng },
         map,
         icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
+          path: google.maps.SymbolPath.CIRCLE,
           scale: 10,
           fillColor: "#4285F4",
           fillOpacity: 1,
@@ -102,7 +127,7 @@ export const initMap = async (
 
     // Add markers for safe places
     safePlaces.forEach(place => {
-      const marker = new window.google.maps.Marker({
+      const marker = new google.maps.Marker({
         position: { lat: place.lat, lng: place.lng },
         map,
         icon: {
@@ -111,7 +136,7 @@ export const initMap = async (
         title: place.name,
       });
 
-      const placeWindow = new window.google.maps.InfoWindow({
+      const placeWindow = new google.maps.InfoWindow({
         content: `
           <div style="padding: 8px;">
             <h3 style="margin: 0 0 8px 0; font-weight: bold;">${place.name}</h3>
@@ -127,6 +152,7 @@ export const initMap = async (
       });
     });
     
+    console.log('Map initialized successfully');
     return map;
   } catch (err) {
     console.error("Error initializing map:", err);

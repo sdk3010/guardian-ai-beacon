@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send } from 'lucide-react';
+import { Mic, MicOff, Send, AlertTriangle } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,30 +21,116 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
+
+  // Check microphone permission
+  useEffect(() => {
+    const checkMicrophonePermission = async () => {
+      try {
+        // Check if navigator.permissions is available
+        if (navigator.permissions) {
+          const permission = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          setPermissionState(permission.state);
+          
+          // Listen for permission changes
+          permission.onchange = () => {
+            setPermissionState(permission.state);
+            if (permission.state === 'granted' && !isListening) {
+              toast({
+                title: "Microphone Access Granted",
+                description: "You can now use voice commands",
+              });
+            } else if (permission.state !== 'granted' && isListening) {
+              stopListening();
+              toast({
+                variant: "destructive",
+                title: "Microphone Access Lost",
+                description: "Voice recognition has been stopped",
+              });
+            }
+          };
+        } else {
+          // Fallback to getUserMedia to check permissions
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop());
+          setPermissionState('granted');
+        }
+      } catch (error) {
+        console.error("Error checking microphone permission:", error);
+        setPermissionState('denied');
+      }
+    };
+
+    checkMicrophonePermission();
+  }, []);
 
   // Voice recognition setup
   const toggleListening = () => {
     if (isListening) {
-      voiceRecognition.stop();
-      setIsListening(false);
-      setTranscript('Voice recognition stopped.');
+      stopListening();
     } else {
       startListening();
     }
   };
 
-  const startListening = () => {
-    setIsListening(true);
-    voiceRecognition.start(
-      (text) => {
-        setTranscript(text);
-        console.log("Voice recognition transcript:", text);
-      },
-      (triggerPhrase) => {
-        // Handle emergency trigger phrases
-        handleEmergencyTrigger(triggerPhrase);
+  const startListening = async () => {
+    // First check if permission is granted
+    if (permissionState === 'denied') {
+      toast({
+        variant: "destructive",
+        title: "Microphone Access Required",
+        description: "Please enable microphone access in your browser settings",
+      });
+      return;
+    }
+    
+    try {
+      if (permissionState !== 'granted') {
+        // Try to request microphone access explicitly
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+        setPermissionState('granted');
       }
-    );
+      
+      setIsListening(true);
+      setTranscript("I'm listening...");
+      voiceRecognition.start(
+        (text) => {
+          setTranscript(text);
+          console.log("Voice recognition transcript:", text);
+        },
+        (triggerPhrase) => {
+          // Handle emergency trigger phrases
+          handleEmergencyTrigger(triggerPhrase);
+        }
+      );
+      
+      // Provide audio feedback
+      voiceSynthesis.speak("I'm listening. How can I help you?", false);
+      
+      toast({
+        title: "Voice Recognition Active",
+        description: "Speak clearly into your microphone",
+      });
+    } catch (error) {
+      console.error("Error starting voice recognition:", error);
+      toast({
+        variant: "destructive",
+        title: "Microphone Error",
+        description: "Could not access microphone. Please check your browser settings.",
+      });
+    }
+  };
+
+  const stopListening = () => {
+    voiceRecognition.stop();
+    setIsListening(false);
+    setTranscript('Voice recognition stopped.');
+    
+    toast({
+      title: "Voice Recognition Stopped",
+      description: "You can still type your messages",
+    });
   };
 
   const handleEmergencyTrigger = async (triggerPhrase: string) => {
@@ -52,10 +138,11 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       variant: "destructive",
       title: "Emergency Detected",
       description: `Trigger phrase detected: "${triggerPhrase}"`,
+      icon: <AlertTriangle className="h-5 w-5" />,
     });
     
     // Speak a response to the user
-    await voiceSynthesis.speak("I've detected an emergency situation. Sending an alert to your emergency contacts.");
+    await voiceSynthesis.speak("I've detected an emergency situation. Sending an alert to your emergency contacts.", false);
     
     // Call the emergency handler if provided
     if (onEmergency) {
@@ -69,7 +156,9 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
 
     // Reset states
     setInputMessage('');
-    setTranscript("I'm listening...");
+    if (!isListening) {
+      setTranscript("I'm listening...");
+    }
     setIsProcessing(true);
     
     // Process the message
@@ -93,6 +182,12 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
       console.log("AI response:", response);
       const aiResponse = response?.data?.message || "I'm sorry, I couldn't process your request.";
       
+      // Temporarily stop listening while speaking to avoid feedback loop
+      const wasListening = isListening;
+      if (wasListening) {
+        voiceRecognition.stop();
+      }
+      
       // Speak the response
       try {
         await voiceSynthesis.speak(aiResponse, true);
@@ -100,6 +195,18 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
         console.error("Error speaking response:", speakError);
         // Fallback to web speech if ElevenLabs fails
         await voiceSynthesis.speak(aiResponse, false);
+      }
+      
+      // Resume listening if it was active before
+      if (wasListening) {
+        voiceRecognition.start(
+          (text) => {
+            setTranscript(text);
+          },
+          (triggerPhrase) => {
+            handleEmergencyTrigger(triggerPhrase);
+          }
+        );
       }
     } catch (error) {
       console.error("Error getting AI response:", error);
@@ -152,6 +259,13 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
           </ul>
         </div>
         
+        {permissionState === 'denied' && (
+          <div className="bg-red-500/20 p-3 rounded-md flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-red-500" />
+            <p className="text-sm text-white">Microphone access denied. Please enable it in your browser settings.</p>
+          </div>
+        )}
+        
         <div className="flex gap-2">
           <Input 
             ref={inputRef}
@@ -167,6 +281,7 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
             variant="outline"
             disabled={isProcessing}
             className="border-[#9b87f5] text-[#9b87f5] hover:bg-[#9b87f5] hover:text-white"
+            aria-label="Send message"
           >
             <Send className="h-4 w-4" />
           </Button>
@@ -174,7 +289,8 @@ export default function VoiceAssistant({ onMessage, onEmergency, className }: Vo
             onClick={toggleListening} 
             variant={isListening ? "destructive" : "outline"}
             className={isListening ? "" : "border-[#9b87f5] text-[#9b87f5] hover:bg-[#9b87f5] hover:text-white"}
-            disabled={isProcessing}
+            disabled={isProcessing || permissionState === 'denied'}
+            aria-label={isListening ? "Stop listening" : "Start listening"}
           >
             {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </Button>
