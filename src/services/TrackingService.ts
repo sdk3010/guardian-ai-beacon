@@ -14,13 +14,13 @@ export interface LocationPoint {
 export interface TrackingSession {
   id: string;
   user_id: string;
-  start_time: string;
-  end_time?: string;
-  start_location: { lat: number; lng: number } | null;
-  end_location?: { lat: number; lng: number } | null;
   status: 'active' | 'completed' | 'emergency';
-  created_at: string;
-  updated_at: string;
+  start_time: string;
+  end_time: string | null;
+  start_location: { lat: number; lng: number };
+  end_location: { lat: number; lng: number } | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 const parseLocation = (location: Json | { lat: number; lng: number }): { lat: number; lng: number } => {
@@ -190,5 +190,19 @@ export class TrackingService {
       console.error('Error getting location points:', error);
       throw error;
     }
+  }
+  
+  private mapSessionResponse(data: any): TrackingSession {
+    return {
+      id: data.id,
+      user_id: data.user_id,
+      status: data.status as 'active' | 'completed' | 'emergency',
+      start_time: data.start_time,
+      end_time: data.end_time,
+      start_location: data.start_location,
+      end_location: data.end_location,
+      created_at: data.created_at,
+      updated_at: data.updated_at
+    };
   }
 }

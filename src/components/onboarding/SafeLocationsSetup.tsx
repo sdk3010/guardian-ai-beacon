@@ -1,14 +1,15 @@
+
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
-import { useToast } from "@/hooks/use-toast";
+import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useSafeLocations } from '@/hooks/useSafeLocations';
 import SafeLocationMarker from '@/components/maps/SafeLocationMarker';
 import { loadGoogleMapsScript } from '@/lib/maps';
-import { MapPin, Plus } from "lucide-react";
+import { MapPin } from "lucide-react";
 import { supabase } from '@/integrations/supabase/client';
 
 export default function SafeLocationsSetup() {
@@ -20,27 +21,28 @@ export default function SafeLocationsSetup() {
   const mapRef = useRef<google.maps.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{lat: number; lng: number} | null>(null);
-  const [hasSeenPrompt, setHasSeenPrompt] = useState(false);
+  const [hasCheckedPrompt, setHasCheckedPrompt] = useState(false);
 
   useEffect(() => {
-    if (user) {
+    if (user && !hasCheckedPrompt) {
       checkUserPromptStatus();
     }
-  }, [user]);
+  }, [user, hasCheckedPrompt]);
 
   const checkUserPromptStatus = async () => {
     if (!user) return;
 
     try {
-      const { data: userSettings } = await supabase
+      const { data: userSettings, error } = await supabase
         .from('user_settings')
         .select('has_seen_location_prompt')
         .eq('user_id', user.id)
         .single();
 
-      if (!userSettings?.has_seen_location_prompt && safeLocations.length < 3) {
+      if (!error && !userSettings?.has_seen_location_prompt && safeLocations.length < 3) {
         setShowDialog(true);
       }
+      setHasCheckedPrompt(true);
     } catch (error) {
       console.error('Error checking prompt status:', error);
     }
@@ -221,11 +223,10 @@ export default function SafeLocationsSetup() {
   };
 
   const handleDialogClose = (open: boolean) => {
-    if (!open && safeLocations.length < 3) {
+    if (!open) {
       handleRemindLater();
-    } else {
-      setShowDialog(open);
     }
+    setShowDialog(open);
   };
 
   return (
