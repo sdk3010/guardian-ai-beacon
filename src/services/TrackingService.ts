@@ -1,6 +1,18 @@
 
 import { supabase } from '@/integrations/supabase/client';
 
+export interface TrackingSession {
+  id: string;
+  user_id: string;
+  start_time: string;
+  end_time: string | null;
+  start_location: { lat: number; lng: number };
+  end_location: { lat: number; lng: number } | null;
+  status: 'active' | 'emergency' | 'completed';
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface LocationPoint {
   id: string;
   session_id: string;
@@ -10,269 +22,186 @@ export interface LocationPoint {
   accuracy?: number;
 }
 
-export interface TrackingSession {
-  id: string;
-  user_id: string;
-  start_location?: { lat: number; lng: number };
-  start_time: string;
-  end_location?: { lat: number; lng: number };
-  end_time?: string;
-  status: 'active' | 'completed' | 'emergency';
-  notes?: string;
-  distance?: number;
-}
-
-export interface SafePlace {
-  id: string;
-  name: string;
-  type: string;
+export interface TrackingSummary {
+  duration: string;
   distance: number;
-  address?: string;
-  rating?: number;
-  lat: number;
-  lng: number;
+  averageSpeed: number;
+  safetyScore: number;
+  pointsCount: number;
 }
 
-export const TrackingService = {
-  // Create a new tracking session
-  async createSession(
-    userId: string, 
-    location: { lat: number; lng: number }
+export class TrackingService {
+  /**
+   * Create a new tracking session
+   */
+  static async createSession(
+    userId: string,
+    startLocation: { lat: number; lng: number }
   ): Promise<TrackingSession> {
     try {
       const { data, error } = await supabase
         .from('tracking_sessions')
         .insert([
-          { 
-            user_id: userId, 
-            start_location: JSON.stringify(location), 
+          {
+            user_id: userId,
+            start_location: startLocation,
+            end_location: null,
             status: 'active'
           }
         ])
-        .select('*')
+        .select()
         .single();
-      
+
       if (error) throw error;
       
-      // Parse the location data from string if necessary
-      const parsedData = {
+      // Convert to properly typed TrackingSession
+      const session: TrackingSession = {
         ...data,
-        start_location: parseLocationData(data.start_location),
-        end_location: parseLocationData(data.end_location)
+        start_location: data.start_location || startLocation,
+        end_location: data.end_location || null,
+        status: data.status as 'active' | 'emergency' | 'completed'
       };
-      
-      return parsedData;
+
+      return session;
     } catch (error) {
       console.error('Error creating tracking session:', error);
-      throw new Error('Failed to create tracking session');
+      throw new Error('Could not create tracking session');
     }
-  },
+  }
 
-  // End a tracking session
-  async endSession(
-    sessionId: string, 
-    location: { lat: number; lng: number }
+  /**
+   * End a tracking session
+   */
+  static async endSession(
+    sessionId: string,
+    endLocation: { lat: number; lng: number }
   ): Promise<TrackingSession> {
     try {
       const { data, error } = await supabase
         .from('tracking_sessions')
-        .update({ 
-          end_location: JSON.stringify(location), 
-          end_time: new Date().toISOString(), 
-          status: 'completed' 
+        .update({
+          status: 'completed',
+          end_location: endLocation,
+          end_time: new Date().toISOString(),
         })
         .eq('id', sessionId)
-        .select('*')
+        .select()
         .single();
-      
+
       if (error) throw error;
       
-      // Parse the location data from string if necessary
-      const parsedData = {
+      // Convert to properly typed TrackingSession
+      const session: TrackingSession = {
         ...data,
-        start_location: parseLocationData(data.start_location),
-        end_location: parseLocationData(data.end_location)
+        start_location: data.start_location || { lat: 0, lng: 0 },
+        end_location: data.end_location || endLocation,
+        status: data.status as 'active' | 'emergency' | 'completed'
       };
-      
-      return parsedData;
+
+      return session;
     } catch (error) {
       console.error('Error ending tracking session:', error);
-      throw new Error('Failed to end tracking session');
+      throw new Error('Could not end tracking session');
     }
-  },
+  }
 
-  // Add a location point to a tracking session
-  async addLocationPoint(
-    sessionId: string, 
-    userId: string, 
-    location: { lat: number; lng: number }, 
+  /**
+   * Add a location point to a tracking session
+   */
+  static async addLocationPoint(
+    sessionId: string,
+    userId: string,
+    location: { lat: number; lng: number },
     accuracy?: number
   ): Promise<LocationPoint> {
     try {
       const { data, error } = await supabase
         .from('location_points')
         .insert([
-          { 
-            session_id: sessionId, 
-            user_id: userId, 
-            location: JSON.stringify(location), 
-            accuracy 
+          {
+            session_id: sessionId,
+            user_id: userId,
+            location,
+            accuracy
           }
         ])
-        .select('*')
+        .select()
         .single();
-      
+
       if (error) throw error;
-      
-      // Parse the location data from string if necessary
-      const parsedData = {
-        ...data,
-        location: parseLocationData(data.location)
-      };
-      
-      return parsedData;
+      return data as LocationPoint;
     } catch (error) {
       console.error('Error adding location point:', error);
-      throw new Error('Failed to add location point');
+      throw new Error('Could not add location point');
     }
-  },
+  }
 
-  // Get location points for a tracking session
-  async getLocationPoints(sessionId: string): Promise<LocationPoint[]> {
+  /**
+   * Get all tracking sessions for a user
+   */
+  static async getTrackingHistory(userId: string): Promise<TrackingSession[]> {
+    try {
+      const { data, error } = await supabase
+        .from('tracking_sessions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      // Convert each session to properly typed TrackingSession
+      const sessions: TrackingSession[] = (data || []).map(session => ({
+        ...session,
+        start_location: session.start_location || { lat: 0, lng: 0 },
+        end_location: session.end_location || null,
+        status: session.status as 'active' | 'emergency' | 'completed'
+      }));
+
+      return sessions;
+    } catch (error) {
+      console.error('Error fetching tracking history:', error);
+      throw new Error('Could not fetch tracking history');
+    }
+  }
+
+  /**
+   * Get all location points for a session
+   */
+  static async getLocationPoints(sessionId: string): Promise<LocationPoint[]> {
     try {
       const { data, error } = await supabase
         .from('location_points')
         .select('*')
         .eq('session_id', sessionId)
         .order('timestamp', { ascending: true });
-      
-      if (error) throw error;
-      
-      // Parse the location data for each point
-      const parsedData = data.map(point => ({
-        ...point,
-        location: parseLocationData(point.location)
-      }));
-      
-      return parsedData;
-    } catch (error) {
-      console.error('Error getting location points:', error);
-      throw new Error('Failed to get location points');
-    }
-  },
 
-  // Get tracking history for a user
-  async getTrackingHistory(userId: string): Promise<TrackingSession[]> {
-    try {
-      console.log('Getting tracking history for user:', userId);
-      const { data, error } = await supabase
-        .from('tracking_sessions')
-        .select('*')
-        .eq('user_id', userId)
-        .order('start_time', { ascending: false });
-      
-      if (error) {
-        console.error('Error in Supabase query:', error);
-        throw error;
-      }
-      
-      console.log('Tracking sessions data:', data);
-      
-      // Parse the location data for each session
-      const parsedData = data.map(session => ({
-        ...session,
-        start_location: parseLocationData(session.start_location),
-        end_location: parseLocationData(session.end_location)
-      }));
-      
-      return parsedData;
+      if (error) throw error;
+      return data as LocationPoint[];
     } catch (error) {
-      console.error('Error getting tracking history:', error);
-      throw new Error('Failed to get tracking history');
-    }
-  },
-  
-  // Get nearby safe places
-  async getSafePlaces(
-    location: { lat: number; lng: number }
-  ): Promise<SafePlace[]> {
-    try {
-      // In a real app, we would make an API call to get safe places
-      // For now, we'll return mock data
-      const radius = 0.01; // roughly 1 mile
-      return [
-        { 
-          id: "place1",
-          name: "Hyderabad Police Station", 
-          type: "Police", 
-          distance: 0.8,
-          lat: location.lat + radius * Math.cos(0),
-          lng: location.lng + radius * Math.sin(0)
-        },
-        { 
-          id: "place2",
-          name: "Apollo Hospital", 
-          type: "Hospital", 
-          distance: 1.2,
-          lat: location.lat + radius * Math.cos(Math.PI/2),
-          lng: location.lng + radius * Math.sin(Math.PI/2)
-        },
-        { 
-          id: "place3",
-          name: "Telangana Fire Station", 
-          type: "Fire Station", 
-          distance: 1.5,
-          lat: location.lat + radius * Math.cos(Math.PI),
-          lng: location.lng + radius * Math.sin(Math.PI)
-        },
-        { 
-          id: "place4",
-          name: "MedPlus Pharmacy", 
-          type: "Pharmacy", 
-          distance: 0.3,
-          lat: location.lat + radius * Math.cos(3*Math.PI/2),
-          lng: location.lng + radius * Math.sin(3*Math.PI/2)
-        },
-      ];
-    } catch (error) {
-      console.error('Error getting safe places:', error);
-      throw new Error('Failed to get safe places');
+      console.error('Error fetching location points:', error);
+      throw new Error('Could not fetch location points');
     }
   }
-};
 
-// Helper function to parse location data from different formats
-function parseLocationData(locationData: any): { lat: number; lng: number } | undefined {
-  if (!locationData) return undefined;
-  
-  try {
-    // If it's a string, try to parse it as JSON
-    if (typeof locationData === 'string') {
-      const parsed = JSON.parse(locationData);
-      if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
-        return { lat: parsed.lat, lng: parsed.lng };
-      }
+  /**
+   * Generate tracking summary
+   */
+  static async generateSessionSummary(sessionId: string): Promise<TrackingSummary> {
+    try {
+      // In a real application, this would analyze the points, calculate distances,
+      // speeds, and generate meaningful safety insights.
+
+      // For now, we'll return some mock data
+      return {
+        duration: '45 mins',
+        distance: 3.2,
+        averageSpeed: 12,
+        safetyScore: 92,
+        pointsCount: 60
+      };
+    } catch (error) {
+      console.error('Error generating session summary:', error);
+      throw new Error('Could not generate session summary');
     }
-    
-    // If it's already an object with lat/lng
-    if (typeof locationData === 'object') {
-      if (locationData.lat && locationData.lng) {
-        return { 
-          lat: typeof locationData.lat === 'number' ? locationData.lat : parseFloat(locationData.lat), 
-          lng: typeof locationData.lng === 'number' ? locationData.lng : parseFloat(locationData.lng) 
-        };
-      }
-      
-      // Handle PostgreSQL POINT type format (x,y)
-      if (locationData.x && locationData.y) {
-        return { lat: locationData.y, lng: locationData.x };
-      }
-    }
-    
-    console.error('Unknown location data format:', locationData);
-    return undefined;
-  } catch (error) {
-    console.error('Error parsing location data:', error, locationData);
-    return undefined;
   }
 }

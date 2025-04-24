@@ -1,27 +1,40 @@
 
 import { useState, useEffect } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from '@/context/AuthContext';
 import { useSafeLocations } from '@/hooks/useSafeLocations';
 import SafeLocationMarker from '@/components/maps/SafeLocationMarker';
-import { loadGoogleMapsScript, initMap } from '@/lib/maps';
+import { loadGoogleMapsScript } from '@/lib/maps';
+import { MapPin, Plus } from "lucide-react";
 
 export default function SafeLocationsSetup() {
   const [showDialog, setShowDialog] = useState(false);
+  const [showManualSetup, setShowManualSetup] = useState(false);
   const { safeLocations, isLoading, addSafeLocation } = useSafeLocations();
   const { toast } = useToast();
   const { user } = useAuth();
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{lat: number; lng: number} | null>(null);
+  const [isFirstTimeUser, setIsFirstTimeUser] = useState(true);
 
   useEffect(() => {
-    if (showDialog) {
+    if (user && !isLoading) {
+      // If user has less than 3 locations and it's their first visit
+      if (safeLocations.length < 3 && isFirstTimeUser) {
+        setShowDialog(true);
+      }
+    }
+  }, [user, isLoading, safeLocations.length, isFirstTimeUser]);
+
+  useEffect(() => {
+    if (showDialog || showManualSetup) {
       initializeMap();
     }
-  }, [showDialog]);
+  }, [showDialog, showManualSetup]);
 
   const initializeMap = async () => {
     try {
@@ -56,7 +69,7 @@ export default function SafeLocationsSetup() {
     }
   };
 
-  const setupMap = async (center: {lat: number; lng: number}) => {
+  const setupMap = (center: {lat: number; lng: number}) => {
     const mapContainer = document.getElementById('safe-locations-map');
     if (!mapContainer) return;
 
@@ -110,6 +123,8 @@ export default function SafeLocationsSetup() {
     description?: string;
     latitude: number;
     longitude: number;
+    radius: number;
+    user_id: string;
   }) => {
     try {
       await addSafeLocation(locationData);
@@ -118,59 +133,145 @@ export default function SafeLocationsSetup() {
         title: "Success",
         description: "Safe location added successfully",
       });
-
-      // If minimum requirement met, allow closing
-      if (safeLocations.length >= 2) {
-        setShowDialog(false);
-      }
     } catch (error) {
       console.error('Error saving location:', error);
     }
   };
 
-  // Show dialog if user has less than 3 safe locations
-  useEffect(() => {
-    if (user && !isLoading && safeLocations.length < 3) {
-      setShowDialog(true);
-    }
-  }, [user, isLoading, safeLocations.length]);
+  const handleRemindLater = () => {
+    setShowDialog(false);
+    toast({
+      title: "Reminder",
+      description: "You can add safe locations later from your dashboard",
+    });
+  };
 
   return (
-    <Dialog open={showDialog} onOpenChange={(open) => {
-      if (safeLocations.length >= 3) {
-        setShowDialog(open);
-      }
-    }}>
-      <DialogContent className="sm:max-w-[800px]">
-        <DialogHeader>
-          <DialogTitle>Set Up Safe Locations</DialogTitle>
-          <DialogDescription>
-            Please mark at least 3 safe locations on the map. Click anywhere to add a location.
-            {safeLocations.length}/3 locations added.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      {/* First-time user dialog */}
+      <Dialog 
+        open={showDialog} 
+        onOpenChange={(open) => {
+          // If the user is closing and has less than 3 locations, confirm
+          if (!open && safeLocations.length < 3) {
+            handleRemindLater();
+          } else {
+            setShowDialog(open);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>Set Up Safe Locations</DialogTitle>
+            <DialogDescription>
+              Please mark at least 3 safe locations on the map. Click anywhere to add a location.
+              {safeLocations.length}/3 locations added.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-4">
-          <div id="safe-locations-map" className="w-full h-[400px] rounded-lg overflow-hidden" />
-          
-          {selectedLocation && (
-            <SafeLocationMarker
-              lat={selectedLocation.lat}
-              lng={selectedLocation.lng}
-              onSave={handleSaveLocation}
-              onCancel={() => setSelectedLocation(null)}
-            />
-          )}
+          <div className="space-y-4">
+            <div id="safe-locations-map" className="w-full h-[400px] rounded-lg overflow-hidden" />
+            
+            {selectedLocation && (
+              <SafeLocationMarker
+                lat={selectedLocation.lat}
+                lng={selectedLocation.lng}
+                onSave={handleSaveLocation}
+                onCancel={() => setSelectedLocation(null)}
+              />
+            )}
+            
+            <DialogFooter className="flex justify-between">
+              <Button 
+                variant="outline" 
+                onClick={handleRemindLater}
+              >
+                Remind Me Later
+              </Button>
+              
+              {safeLocations.length >= 3 && (
+                <Button onClick={() => setShowDialog(false)}>
+                  Done
+                </Button>
+              )}
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-          {safeLocations.length >= 3 && (
-            <div className="flex justify-end">
-              <Button onClick={() => setShowDialog(false)}>
+      {/* Button to manually open the safe locations setup */}
+      <Button
+        variant="outline"
+        size="sm"
+        className="flex items-center gap-2"
+        onClick={() => setShowManualSetup(true)}
+      >
+        <MapPin className="h-4 w-4" />
+        Manage Safe Locations
+      </Button>
+
+      {/* Sheet for manual setup (accessible any time) */}
+      <Sheet open={showManualSetup} onOpenChange={setShowManualSetup}>
+        <SheetContent className="sm:max-w-[800px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Manage Safe Locations</SheetTitle>
+            <SheetDescription>
+              You can add up to 9 safe locations. Click anywhere on the map to add a location.
+              {safeLocations.length}/9 locations added.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-4 space-y-6">
+            <div id="safe-locations-map" className="w-full h-[400px] rounded-lg overflow-hidden" />
+            
+            {selectedLocation && (
+              <SafeLocationMarker
+                lat={selectedLocation.lat}
+                lng={selectedLocation.lng}
+                onSave={handleSaveLocation}
+                onCancel={() => setSelectedLocation(null)}
+              />
+            )}
+            
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium">Your Safe Locations</h3>
+              
+              {isLoading ? (
+                <div className="flex justify-center py-4">
+                  <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              ) : safeLocations.length > 0 ? (
+                <div className="grid gap-2">
+                  {safeLocations.map((location) => (
+                    <div 
+                      key={location.id} 
+                      className="flex justify-between items-center p-3 border rounded-md"
+                    >
+                      <div>
+                        <p className="font-medium">{location.name}</p>
+                        {location.description && (
+                          <p className="text-sm text-muted-foreground">{location.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6 border rounded-md bg-muted/20">
+                  <MapPin className="mx-auto h-8 w-8 text-muted-foreground" />
+                  <p className="mt-2 text-muted-foreground">No safe locations added yet</p>
+                </div>
+              )}
+            </div>
+            
+            <SheetFooter>
+              <Button onClick={() => setShowManualSetup(false)}>
                 Done
               </Button>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+            </SheetFooter>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }

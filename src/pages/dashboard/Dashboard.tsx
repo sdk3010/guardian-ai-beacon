@@ -1,10 +1,11 @@
+
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import ProfileUpload from '@/components/profile/ProfileUpload';
-import { MapPin, Clock, Phone, Shield, ArrowRight, AlertTriangle } from "lucide-react";
+import { MapPin, Clock, Phone, Shield, ArrowRight, AlertTriangle, Plus } from "lucide-react";
 import EmergencyButton from '@/components/safety/EmergencyButton';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -138,10 +139,35 @@ export default function Dashboard() {
   };
 
   const handleProfileUpdate = async (imageUrl: string) => {
-    setUserInfo(prev => prev ? ({
-      ...prev,
-      profilePic: imageUrl
-    }) : null);
+    try {
+      if (user && imageUrl) {
+        // Update the profile image in the database
+        const { error } = await supabase
+          .from('users')
+          .update({ profile_image_url: imageUrl })
+          .eq('id', user.id);
+
+        if (error) throw error;
+
+        // Update local state
+        setUserInfo(prev => prev ? ({
+          ...prev,
+          profilePic: imageUrl
+        }) : null);
+
+        toast({
+          title: "Success",
+          description: "Profile picture updated successfully",
+        });
+      }
+    } catch (err: any) {
+      console.error('Error updating profile image:', err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to update profile picture",
+      });
+    }
   };
 
   const formatDate = (dateString?: string) => {
@@ -262,7 +288,10 @@ export default function Dashboard() {
             </div>
 
             <div className="mt-6 space-y-3">
-              <h3 className="font-medium">Quick Actions</h3>
+              <div className="flex justify-between items-center">
+                <h3 className="font-medium">Quick Actions</h3>
+                <SafeLocationsSetup />
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 <Button 
                   variant="outline" 

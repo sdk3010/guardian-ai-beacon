@@ -11,7 +11,10 @@ export interface SafeLocation {
   longitude: number;
   description?: string;
   contact_id?: string;
+  user_id: string;
   created_at: string;
+  updated_at?: string;
+  radius: number;
 }
 
 export function useSafeLocations() {
@@ -28,13 +31,14 @@ export function useSafeLocations() {
 
   const loadSafeLocations = async () => {
     try {
+      setIsLoading(true);
       const { data, error } = await supabase
         .from('safe_zones')
         .select('*')
         .eq('user_id', user?.id);
 
       if (error) throw error;
-      setSafeLocations(data);
+      setSafeLocations(data || []);
     } catch (error: any) {
       console.error('Error loading safe locations:', error);
       toast({
@@ -47,14 +51,16 @@ export function useSafeLocations() {
     }
   };
 
-  const addSafeLocation = async (location: Omit<SafeLocation, 'id' | 'created_at'>) => {
+  const addSafeLocation = async (location: Omit<SafeLocation, 'id' | 'created_at' | 'updated_at'>) => {
     try {
       const { data, error } = await supabase
         .from('safe_zones')
         .insert([
           {
             ...location,
-            user_id: user?.id
+            user_id: user?.id,
+            // Default radius if not provided
+            radius: location.radius || 200 // Default 200 meters radius
           }
         ])
         .select()

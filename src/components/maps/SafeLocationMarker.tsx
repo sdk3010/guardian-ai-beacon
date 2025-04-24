@@ -6,12 +6,12 @@ import { Form, FormField, FormItem, FormLabel, FormControl } from "@/components/
 import { Input } from "@/components/ui/input";
 import { useForm } from "react-hook-form";
 import { MapPin } from "lucide-react";
-import type { SafeLocation } from '@/hooks/useSafeLocations';
+import { SafeLocation } from '@/hooks/useSafeLocations';
 
 interface SafeLocationMarkerProps {
   lat: number;
   lng: number;
-  onSave: (location: Omit<SafeLocation, 'id' | 'created_at'>) => Promise<void>;
+  onSave: (location: Omit<SafeLocation, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -21,16 +21,19 @@ export default function SafeLocationMarker({ lat, lng, onSave, onCancel }: SafeL
     defaultValues: {
       name: '',
       description: '',
+      radius: 200, // Default radius in meters
     }
   });
 
-  const onSubmit = async (data: { name: string; description: string }) => {
+  const onSubmit = async (data: { name: string; description: string; radius: number }) => {
     try {
       await onSave({
         name: data.name,
         description: data.description,
         latitude: lat,
         longitude: lng,
+        radius: data.radius,
+        user_id: '' // This will be set in the hook
       });
       setIsOpen(false);
     } catch (error) {
@@ -74,6 +77,24 @@ export default function SafeLocationMarker({ lat, lng, onSave, onCancel }: SafeL
                     <FormLabel>Description (Optional)</FormLabel>
                     <FormControl>
                       <Input placeholder="Additional details about this location" {...field} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="radius"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Safe Zone Radius (meters)</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="number" 
+                        placeholder="Radius in meters" 
+                        {...field} 
+                        onChange={e => field.onChange(parseInt(e.target.value) || 200)}
+                      />
                     </FormControl>
                   </FormItem>
                 )}

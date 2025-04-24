@@ -26,7 +26,8 @@ export const loadGoogleMapsScript = (): Promise<void> => {
     try {
       console.log('Loading Google Maps API...');
       // Using a valid API key configured for the Hyderabad/Telangana region
-      const apiKey = 'AIzaSyA6ZZYRaTdpgveJzLztlc3e_Y57LPQlBo8';
+      // AIzaSyCyCFIkE5_57XU3T3HxM5YKPLXnk4GwA3g updated key for Hyderabad region
+      const apiKey = 'AIzaSyCyCFIkE5_57XU3T3HxM5YKPLXnk4GwA3g';
       
       const script = document.createElement('script');
       script.id = 'google-maps-script';
