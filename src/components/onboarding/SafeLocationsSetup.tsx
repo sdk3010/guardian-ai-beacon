@@ -1,6 +1,5 @@
-
 import { useState, useEffect, useRef } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
@@ -10,6 +9,7 @@ import { useSafeLocations } from '@/hooks/useSafeLocations';
 import SafeLocationMarker from '@/components/maps/SafeLocationMarker';
 import { loadGoogleMapsScript } from '@/lib/maps';
 import { MapPin, Plus } from "lucide-react";
+import { supabase } from '@/integrations/supabase/client';
 
 export default function SafeLocationsSetup() {
   const [showDialog, setShowDialog] = useState(false);
@@ -20,21 +20,61 @@ export default function SafeLocationsSetup() {
   const mapRef = useRef<google.maps.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{lat: number; lng: number} | null>(null);
-  const [isFirstTimeUser, setIsFirstTimeUser] = useState(true);
-  const [canCloseDialog, setCanCloseDialog] = useState(true);
-  const googleMapLoadedRef = useRef(false);
+  const [hasSeenPrompt, setHasSeenPrompt] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      checkUserPromptStatus();
+    }
+  }, [user]);
+
+  const checkUserPromptStatus = async () => {
+    if (!user) return;
+
+    try {
+      const { data: userSettings } = await supabase
+        .from('user_settings')
+        .select('has_seen_location_prompt')
+        .eq('user_id', user.id)
+        .single();
+
+      if (!userSettings?.has_seen_location_prompt && safeLocations.length < 3) {
+        setShowDialog(true);
+      }
+    } catch (error) {
+      console.error('Error checking prompt status:', error);
+    }
+  };
+
+  const handleRemindLater = async () => {
+    if (!user) return;
+    
+    try {
+      // Update user settings to mark that they've seen the prompt
+      await supabase
+        .from('user_settings')
+        .upsert({
+          user_id: user.id,
+          has_seen_location_prompt: true
+        });
+
+      setShowDialog(false);
+      toast({
+        description: "You can add safe locations later from your dashboard",
+      });
+    } catch (error) {
+      console.error('Error updating user settings:', error);
+    }
+  };
 
   useEffect(() => {
     if (user && !isLoading) {
       // If user has less than 3 locations and it's their first visit
-      if (safeLocations.length < 3 && isFirstTimeUser) {
+      if (safeLocations.length < 3) {
         setShowDialog(true);
-        if (safeLocations.length < 3) {
-          setCanCloseDialog(false);
-        }
       }
     }
-  }, [user, isLoading, safeLocations.length, isFirstTimeUser]);
+  }, [user, isLoading, safeLocations.length]);
 
   // Clean up effect for the map when component unmounts
   useEffect(() => {
@@ -108,7 +148,6 @@ export default function SafeLocationsSetup() {
     });
 
     mapRef.current = newMap;
-    googleMapLoadedRef.current = true;
 
     // Add existing safe locations to map
     safeLocations.forEach(location => {
@@ -163,12 +202,6 @@ export default function SafeLocationsSetup() {
         title: "Success",
         description: "Safe location added successfully",
       });
-      
-      // Enable closing the dialog once we have at least 3 locations
-      if (!canCloseDialog && safeLocations.length + 1 >= 3) {
-        setCanCloseDialog(true);
-      }
-      
     } catch (error) {
       console.error('Error saving location:', error);
       toast({
@@ -179,37 +212,39 @@ export default function SafeLocationsSetup() {
     }
   };
 
-  const handleRemindLater = () => {
-    setShowDialog(false);
-    toast({
-      title: "Reminder",
-      description: "You can add safe locations later from your dashboard",
-    });
+  const handleRemindLater = async () => {
+    if (!user) return;
+    
+    try {
+      // Update user settings to mark that they've seen the prompt
+      await supabase
+        .from('user_settings')
+        .upsert({
+          user_id: user.id,
+          has_seen_location_prompt: true
+        });
+
+      setShowDialog(false);
+      toast({
+        description: "You can add safe locations later from your dashboard",
+      });
+    } catch (error) {
+      console.error('Error updating user settings:', error);
+    }
+  };
+
+  // Update dialog close handler
+  const handleDialogClose = (open: boolean) => {
+    if (!open && safeLocations.length < 3) {
+      handleRemindLater();
+    } else {
+      setShowDialog(open);
+    }
   };
 
   return (
     <>
-      {/* First-time user dialog */}
-      <Dialog 
-        open={showDialog} 
-        onOpenChange={(open) => {
-          // If the user is closing and has less than 3 locations, show warning
-          if (!open && !canCloseDialog) {
-            toast({
-              variant: "warning",
-              title: "Add Required Locations",
-              description: "Please add at least 3 safe locations for optimal safety monitoring.",
-            });
-            return; // Prevent closing
-          }
-          
-          if (!open && safeLocations.length < 3) {
-            handleRemindLater();
-          } else {
-            setShowDialog(open);
-          }
-        }}
-      >
+      <Dialog open={showDialog} onOpenChange={handleDialogClose}>
         <DialogContent className="sm:max-w-[800px]">
           <DialogHeader>
             <DialogTitle>Set Up Safe Locations</DialogTitle>
@@ -239,7 +274,6 @@ export default function SafeLocationsSetup() {
               <Button 
                 variant="outline" 
                 onClick={handleRemindLater}
-                disabled={!canCloseDialog}
               >
                 Remind Me Later
               </Button>
@@ -258,7 +292,7 @@ export default function SafeLocationsSetup() {
       <Button
         variant="outline"
         size="sm"
-        className="flex items-center gap-2"
+        className="flex items-center gap-2 mb-4"
         onClick={() => setShowManualSetup(true)}
       >
         <MapPin className="h-4 w-4" />

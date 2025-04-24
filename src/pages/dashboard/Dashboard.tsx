@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +29,7 @@ export default function Dashboard() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showManualSetup, setShowManualSetup] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -300,6 +300,15 @@ export default function Dashboard() {
                 >
                   <MapPin className="mr-2 h-4 w-4" />
                   Start Tracking
+                </Button>
+
+                <Button 
+                  variant="outline" 
+                  className="justify-start"
+                  onClick={() => setShowManualSetup(true)}
+                >
+                  <MapPin className="mr-2 h-4 w-4" />
+                  Manage Safe Locations
                 </Button>
 
                 <Button 

@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { Json } from "@/integrations/supabase/types";
 
@@ -24,13 +23,11 @@ export interface TrackingSession {
   updated_at: string;
 }
 
-// Helper function to ensure location is in the correct format
 const parseLocation = (location: Json | { lat: number; lng: number }): { lat: number; lng: number } => {
   if (location === null || location === undefined) {
     return { lat: 0, lng: 0 };
   }
   
-  // If it's already in the correct format
   if (typeof location === 'object' && 'lat' in location && 'lng' in location) {
     return { 
       lat: Number(location.lat),
@@ -38,7 +35,6 @@ const parseLocation = (location: Json | { lat: number; lng: number }): { lat: nu
     };
   }
   
-  // If it's a JSON string
   if (typeof location === 'string') {
     try {
       const parsed = JSON.parse(location);
@@ -53,7 +49,6 @@ const parseLocation = (location: Json | { lat: number; lng: number }): { lat: nu
     }
   }
   
-  // If it's a JSONB object from Supabase
   if (typeof location === 'object') {
     const loc = location as any;
     if (loc.lat !== undefined && loc.lng !== undefined) {
@@ -69,7 +64,6 @@ const parseLocation = (location: Json | { lat: number; lng: number }): { lat: nu
 };
 
 export class TrackingService {
-  // Create a new tracking session
   static async createSession(userId: string, startLocation: { lat: number; lng: number }): Promise<TrackingSession> {
     try {
       const { data, error } = await supabase
@@ -78,7 +72,7 @@ export class TrackingService {
           {
             user_id: userId,
             start_location: startLocation,
-            status: 'active'
+            status: 'active' as const
           }
         ])
         .select()
@@ -88,6 +82,7 @@ export class TrackingService {
       
       return {
         ...data,
+        status: data.status as 'active' | 'completed' | 'emergency',
         start_location: parseLocation(data.start_location),
         end_location: data.end_location ? parseLocation(data.end_location) : null
       };
@@ -97,7 +92,6 @@ export class TrackingService {
     }
   }
   
-  // End an existing tracking session
   static async endSession(sessionId: string, endLocation: { lat: number; lng: number }): Promise<TrackingSession> {
     try {
       const { data, error } = await supabase
@@ -124,7 +118,6 @@ export class TrackingService {
     }
   }
   
-  // Add a location point to a session
   static async addLocationPoint(
     sessionId: string,
     userId: string,
@@ -157,7 +150,6 @@ export class TrackingService {
     }
   }
   
-  // Get tracking history for a user
   static async getTrackingHistory(userId: string): Promise<TrackingSession[]> {
     try {
       const { data, error } = await supabase
@@ -179,7 +171,6 @@ export class TrackingService {
     }
   }
   
-  // Get location points for a specific session
   static async getLocationPoints(sessionId: string): Promise<LocationPoint[]> {
     try {
       const { data, error } = await supabase

@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,18 +14,40 @@ interface ProfileUploadProps {
 
 export default function ProfileUpload({ currentImage, onUploadSuccess }: ProfileUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
-  const [error, setError] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const { user } = useAuth();
 
-  // Handle file selection and upload
+  useEffect(() => {
+    const createStorageBucket = async () => {
+      if (!user) return;
+      
+      try {
+        const { data: existingBucket } = await supabase
+          .storage
+          .getBucket('profiles');
+        
+        if (!existingBucket) {
+          await supabase
+            .storage
+            .createBucket('profiles', {
+              public: true,
+              fileSizeLimit: 5242880 // 5MB
+            });
+        }
+      } catch (error) {
+        console.error('Error creating bucket:', error);
+      }
+    };
+
+    createStorageBucket();
+  }, [user]);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // Validate file type
     if (!file.type.startsWith('image/')) {
       setError('Please upload an image file');
       toast({
@@ -37,7 +58,6 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
       return;
     }
 
-    // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       setError('File size must be less than 5MB');
       toast({
@@ -53,26 +73,22 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     setUploadProgress(0);
 
     try {
-      // Upload file to Supabase Storage
       const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`;
-      const filePath = `${fileName}`;
+      const filePath = `${user.id}-${Date.now()}.${fileExt}`;
 
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('profiles')
         .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: true
+          upsert: true,
+          cacheControl: '3600'
         });
 
       if (uploadError) throw uploadError;
 
-      // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('profiles')
         .getPublicUrl(filePath);
 
-      // Update user profile in database
       const { error: updateError } = await supabase
         .from('users')
         .update({ profile_image_url: publicUrl })
