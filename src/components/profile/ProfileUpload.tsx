@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,41 +16,17 @@ interface ProfileUploadProps {
 export default function ProfileUpload({ currentImage, onUploadSuccess }: ProfileUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const { user } = useAuth();
-
-  useEffect(() => {
-    const createStorageBucket = async () => {
-      if (!user) return;
-      
-      try {
-        const { data: existingBucket } = await supabase
-          .storage
-          .getBucket('profiles');
-        
-        if (!existingBucket) {
-          await supabase
-            .storage
-            .createBucket('profiles', {
-              public: true,
-              fileSizeLimit: 5242880 // 5MB
-            });
-        }
-      } catch (error) {
-        console.error('Error creating bucket:', error);
-      }
-    };
-
-    createStorageBucket();
-  }, [user]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
     if (!file.type.startsWith('image/')) {
-      setError('Please upload an image file');
+      setUploadError('Please upload an image file');
       toast({
         variant: "destructive",
         title: "Invalid file type",
@@ -59,7 +36,7 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      setError('File size must be less than 5MB');
+      setUploadError('File size must be less than 5MB');
       toast({
         variant: "destructive",
         title: "File too large",
@@ -69,7 +46,7 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
     }
 
     setIsUploading(true);
-    setError('');
+    setUploadError('');
     setUploadProgress(0);
 
     try {
@@ -105,7 +82,7 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
       });
     } catch (err: any) {
       console.error('Upload error:', err);
-      setError(err.message);
+      setUploadError(err.message);
       toast({
         variant: "destructive",
         title: "Upload failed",
@@ -149,8 +126,8 @@ export default function ProfileUpload({ currentImage, onUploadSuccess }: Profile
         {isUploading ? 'Uploading...' : 'Change Profile Picture'}
       </Button>
 
-      {error && (
-        <p className="text-sm text-destructive">{error}</p>
+      {uploadError && (
+        <p className="text-sm text-destructive">{uploadError}</p>
       )}
     </div>
   );

@@ -50,7 +50,6 @@ export default function SafeLocationsSetup() {
     if (!user) return;
     
     try {
-      // Update user settings to mark that they've seen the prompt
       await supabase
         .from('user_settings')
         .upsert({
@@ -69,24 +68,20 @@ export default function SafeLocationsSetup() {
 
   useEffect(() => {
     if (user && !isLoading) {
-      // If user has less than 3 locations and it's their first visit
       if (safeLocations.length < 3) {
         setShowDialog(true);
       }
     }
   }, [user, isLoading, safeLocations.length]);
 
-  // Clean up effect for the map when component unmounts
   useEffect(() => {
     return () => {
       if (mapContainerRef.current && mapRef.current) {
-        // Clean up by setting mapRef to null when unmounting
         mapRef.current = null;
       }
     };
   }, []);
 
-  // Handle dialog or sheet open/close
   useEffect(() => {
     if (showDialog || showManualSetup) {
       initializeMap();
@@ -94,7 +89,6 @@ export default function SafeLocationsSetup() {
   }, [showDialog, showManualSetup]);
 
   const initializeMap = async () => {
-    // Don't initialize if map container doesn't exist
     if (!mapContainerRef.current) {
       return;
     }
@@ -102,7 +96,6 @@ export default function SafeLocationsSetup() {
     try {
       await loadGoogleMapsScript();
       
-      // Default to Hyderabad center
       const defaultLocation = { lat: 17.3850, lng: 78.4867 };
       
       if (navigator.geolocation) {
@@ -132,13 +125,11 @@ export default function SafeLocationsSetup() {
   };
 
   const setupMap = (center: {lat: number; lng: number}) => {
-    // Ensure we have both a container and the Google Maps API is loaded
     if (!mapContainerRef.current || !window.google || !window.google.maps) {
       console.error('Map container or Google Maps not available');
       return;
     }
 
-    // Create the map instance
     const newMap = new window.google.maps.Map(mapContainerRef.current, {
       center,
       zoom: 13,
@@ -149,7 +140,6 @@ export default function SafeLocationsSetup() {
 
     mapRef.current = newMap;
 
-    // Add existing safe locations to map
     safeLocations.forEach(location => {
       if (!mapRef.current || !window.google || !window.google.maps) return;
       
@@ -163,7 +153,6 @@ export default function SafeLocationsSetup() {
       });
     });
 
-    // Handle map clicks for adding new locations
     newMap.addListener('click', (e: google.maps.MapMouseEvent) => {
       if (!e.latLng) return;
       
@@ -172,7 +161,6 @@ export default function SafeLocationsSetup() {
         lng: e.latLng.lng(),
       };
 
-      // Limit to 9 locations
       if (safeLocations.length >= 9) {
         toast({
           variant: "destructive",
@@ -216,7 +204,6 @@ export default function SafeLocationsSetup() {
     if (!user) return;
     
     try {
-      // Update user settings to mark that they've seen the prompt
       await supabase
         .from('user_settings')
         .upsert({
@@ -233,7 +220,6 @@ export default function SafeLocationsSetup() {
     }
   };
 
-  // Update dialog close handler
   const handleDialogClose = (open: boolean) => {
     if (!open && safeLocations.length < 3) {
       handleRemindLater();
@@ -288,7 +274,6 @@ export default function SafeLocationsSetup() {
         </DialogContent>
       </Dialog>
 
-      {/* Button to manually open the safe locations setup */}
       <Button
         variant="outline"
         size="sm"
@@ -299,7 +284,6 @@ export default function SafeLocationsSetup() {
         Manage Safe Locations
       </Button>
 
-      {/* Sheet for manual setup (accessible any time) */}
       <Sheet open={showManualSetup} onOpenChange={setShowManualSetup}>
         <SheetContent className="sm:max-w-[800px] overflow-y-auto">
           <SheetHeader>
