@@ -1,5 +1,5 @@
 
-// This file allows TypeScript to recognize the Google Maps API types
+// This file declares the Google Maps API types for TypeScript
 declare global {
   interface Window {
     initGoogleMaps: () => void;
@@ -23,9 +23,6 @@ declare namespace google {
       getBounds(): LatLngBounds | null;
       fitBounds(bounds: LatLngBounds | LatLngBoundsLiteral, padding?: number | Padding): void;
       addControl(control: any, position?: ControlPosition): void;
-      setFog(options: any): void;
-      easeTo(options: any): void;
-      scrollZoom: { disable(): void, enable(): void };
     }
 
     class Marker {
@@ -263,32 +260,6 @@ declare namespace google {
       | 'REQUEST_DENIED'
       | 'UNKNOWN_ERROR'
       | 'ZERO_RESULTS';
-
-    class NavigationControl {
-      constructor(options?: { visualizePitch?: boolean });
-    }
-
-    enum ControlPosition {
-      BOTTOM_CENTER,
-      BOTTOM_LEFT,
-      BOTTOM_RIGHT,
-      LEFT_BOTTOM,
-      LEFT_CENTER,
-      LEFT_TOP,
-      RIGHT_BOTTOM,
-      RIGHT_CENTER,
-      RIGHT_TOP,
-      TOP_CENTER,
-      TOP_LEFT,
-      TOP_RIGHT
-    }
-
-    interface Padding {
-      top: number;
-      right: number;
-      bottom: number;
-      left: number;
-    }
   }
 }
 

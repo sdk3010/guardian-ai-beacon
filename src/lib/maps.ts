@@ -25,12 +25,12 @@ export const loadGoogleMapsScript = (): Promise<void> => {
     
     try {
       console.log('Loading Google Maps API...');
-      // Using a valid API key that works for the Hyderabad region
+      // Using a valid API key configured for the Hyderabad/Telangana region
       const apiKey = 'AIzaSyA6ZZYRaTdpgveJzLztlc3e_Y57LPQlBo8';
       
       const script = document.createElement('script');
       script.id = 'google-maps-script';
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry&callback=initGoogleMaps&loading=async&region=IN`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry&callback=initGoogleMaps&loading=async&region=IN&language=en`;
       script.async = true;
       script.defer = true;
       
@@ -87,26 +87,26 @@ export const initMap = async (
       fullscreenControl: false,
     };
     
-    const map = new google.maps.Map(mapContainerRef.current, mapOptions);
+    const map = new window.google.maps.Map(mapContainerRef.current, mapOptions);
 
     // Add info window for current location
-    const infoWindow = new google.maps.InfoWindow();
+    const infoWindow = new window.google.maps.InfoWindow();
     
     // Try to get address for current location
-    const geocoder = new google.maps.Geocoder();
+    const geocoder = new window.google.maps.Geocoder();
     geocoder.geocode({ location: currentLocation }, (results, status) => {
       let locationName = "Your current location";
       
-      if (status === "OK" && results && results.length > 0) {
+      if (status === "OK" && results && results[0]) {
         locationName = results[0].formatted_address;
       }
       
       // Add marker for current location
-      const marker = new google.maps.Marker({
+      const marker = new window.google.maps.Marker({
         position: { lat: currentLocation.lat, lng: currentLocation.lng },
         map,
         icon: {
-          path: google.maps.SymbolPath.CIRCLE,
+          path: window.google.maps.SymbolPath.CIRCLE,
           scale: 10,
           fillColor: "#4285F4",
           fillOpacity: 1,
@@ -130,7 +130,12 @@ export const initMap = async (
 
     // Add markers for safe places
     safePlaces.forEach(place => {
-      const marker = new google.maps.Marker({
+      if (!place || typeof place.lat !== 'number' || typeof place.lng !== 'number') {
+        console.error('Invalid safe place:', place);
+        return;
+      }
+      
+      const marker = new window.google.maps.Marker({
         position: { lat: place.lat, lng: place.lng },
         map,
         icon: {
@@ -139,7 +144,7 @@ export const initMap = async (
         title: place.name,
       });
 
-      const placeWindow = new google.maps.InfoWindow({
+      const placeWindow = new window.google.maps.InfoWindow({
         content: `
           <div style="padding: 8px;">
             <h3 style="margin: 0 0 8px 0; font-weight: bold;">${place.name}</h3>

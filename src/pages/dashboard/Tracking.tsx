@@ -44,8 +44,8 @@ export default function Tracking() {
     
     const initializeMap = async () => {
       try {
-        // Default location (San Francisco)
-        const defaultLocation = { lat: 37.7749, lng: -122.4194 };
+        // Default location (Hyderabad)
+        const defaultLocation = { lat: 17.3850, lng: 78.4867 };
         
         setIsLoading(true);
         
@@ -66,7 +66,7 @@ export default function Tracking() {
                 setMap(newMap);
                 
                 // Initialize geocoder
-                geocoderRef.current = new google.maps.Geocoder();
+                geocoderRef.current = new window.google.maps.Geocoder();
                 
                 // Find nearby safe places
                 findNearbySafePlaces(pos);
@@ -88,7 +88,10 @@ export default function Tracking() {
                   if (newMap) {
                     setMap(newMap);
                     setCurrentLocation(defaultLocation);
-                    geocoderRef.current = new google.maps.Geocoder();
+                    geocoderRef.current = new window.google.maps.Geocoder();
+                    
+                    // Find nearby safe places for default location
+                    findNearbySafePlaces(defaultLocation);
                   }
                   setIsLoading(false);
                 })
@@ -110,7 +113,10 @@ export default function Tracking() {
               if (newMap) {
                 setMap(newMap);
                 setCurrentLocation(defaultLocation);
-                geocoderRef.current = new google.maps.Geocoder();
+                geocoderRef.current = new window.google.maps.Geocoder();
+                
+                // Find nearby safe places for default location
+                findNearbySafePlaces(defaultLocation);
               }
               setIsLoading(false);
             })
@@ -160,13 +166,13 @@ export default function Tracking() {
   };
 
   const findNearbySafePlaces = (location: {lat: number, lng: number}) => {
-    // Generate some realistic safe places around the location
+    // Generate some realistic safe places around the location for Telangana/Hyderabad region
     setTimeout(() => {
       const radius = 0.01; // roughly 1 mile
       const mockPlaces = [
         { 
           id: "place1",
-          name: "Downtown Police Station", 
+          name: "Hyderabad Police Station", 
           type: "Police", 
           distance: 0.8,
           lat: location.lat + radius * Math.cos(0),
@@ -174,7 +180,7 @@ export default function Tracking() {
         },
         { 
           id: "place2",
-          name: "City Hospital", 
+          name: "Apollo Hospital", 
           type: "Hospital", 
           distance: 1.2,
           lat: location.lat + radius * Math.cos(Math.PI/2),
@@ -182,7 +188,7 @@ export default function Tracking() {
         },
         { 
           id: "place3",
-          name: "Central Fire Department", 
+          name: "Telangana Fire Station", 
           type: "Fire Station", 
           distance: 1.5,
           lat: location.lat + radius * Math.cos(Math.PI),
@@ -190,7 +196,7 @@ export default function Tracking() {
         },
         { 
           id: "place4",
-          name: "24/7 Pharmacy", 
+          name: "MedPlus Pharmacy", 
           type: "Pharmacy", 
           distance: 0.3,
           lat: location.lat + radius * Math.cos(3*Math.PI/2),
@@ -377,17 +383,17 @@ export default function Tracking() {
           marker.setMap(null);
         }
         
-        const newMarker = new google.maps.Marker({
+        const newMarker = new window.google.maps.Marker({
           position: newPos,
           map: map,
           title: results[0].formatted_address,
-          animation: google.maps.Animation.DROP,
+          animation: window.google.maps.Animation.DROP,
         });
         
         setMarker(newMarker);
         
         // Create info window with address
-        const infoWindow = new google.maps.InfoWindow({
+        const infoWindow = new window.google.maps.InfoWindow({
           content: `<div><strong>${results[0].formatted_address}</strong></div>`,
         });
         

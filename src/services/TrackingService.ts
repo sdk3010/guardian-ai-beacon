@@ -1,223 +1,278 @@
-import { supabase } from '@/integrations/supabase/client';
 
-export interface TrackingSession {
-  id: string;
-  user_id: string;
-  start_location: { lat: number; lng: number };
-  end_location?: { lat: number; lng: number };
-  start_time: string;
-  end_time?: string;
-  status: 'active' | 'completed';
-  created_at?: string;
-  updated_at?: string;
-}
+import { supabase } from '@/integrations/supabase/client';
 
 export interface LocationPoint {
   id: string;
   session_id: string;
   user_id: string;
   location: { lat: number; lng: number };
-  accuracy?: number;
   timestamp: string;
-  created_at?: string;
+  accuracy?: number;
 }
 
-export class TrackingService {
-  static async createSession(userId: string, startLocation: { lat: number; lng: number }): Promise<TrackingSession> {
-    const { data, error } = await supabase
-      .from('tracking_sessions')
-      .insert({
-        user_id: userId,
-        start_location: startLocation,
-        start_time: new Date().toISOString(),
-        status: 'active'
-      })
-      .select()
-      .single();
+export interface TrackingSession {
+  id: string;
+  user_id: string;
+  start_location?: { lat: number; lng: number };
+  start_time: string;
+  end_location?: { lat: number; lng: number };
+  end_time?: string;
+  status: 'active' | 'completed' | 'emergency';
+  notes?: string;
+  distance?: number;
+}
 
-    if (error) throw error;
-    
-    // Convert from database format to our TypeScript interface
-    return this.convertDbSessionToTrackingSession(data);
-  }
+export interface SafePlace {
+  id: string;
+  name: string;
+  type: string;
+  distance: number;
+  address?: string;
+  rating?: number;
+  lat: number;
+  lng: number;
+}
 
-  static async endSession(sessionId: string, endLocation: { lat: number; lng: number }): Promise<TrackingSession> {
-    const { data, error } = await supabase
-      .from('tracking_sessions')
-      .update({
-        end_location: endLocation,
-        end_time: new Date().toISOString(),
-        status: 'completed',
-      })
-      .eq('id', sessionId)
-      .select()
-      .single();
+export const TrackingService = {
+  // Create a new tracking session
+  async createSession(
+    userId: string, 
+    location: { lat: number; lng: number }
+  ): Promise<TrackingSession> {
+    try {
+      const { data, error } = await supabase
+        .from('tracking_sessions')
+        .insert([
+          { 
+            user_id: userId, 
+            start_location: JSON.stringify(location), 
+            status: 'active'
+          }
+        ])
+        .select('*')
+        .single();
+      
+      if (error) throw error;
+      
+      // Parse the location data from string if necessary
+      const parsedData = {
+        ...data,
+        start_location: parseLocationData(data.start_location),
+        end_location: parseLocationData(data.end_location)
+      };
+      
+      return parsedData;
+    } catch (error) {
+      console.error('Error creating tracking session:', error);
+      throw new Error('Failed to create tracking session');
+    }
+  },
 
-    if (error) throw error;
-    
-    // Convert from database format to our TypeScript interface
-    return this.convertDbSessionToTrackingSession(data);
-  }
+  // End a tracking session
+  async endSession(
+    sessionId: string, 
+    location: { lat: number; lng: number }
+  ): Promise<TrackingSession> {
+    try {
+      const { data, error } = await supabase
+        .from('tracking_sessions')
+        .update({ 
+          end_location: JSON.stringify(location), 
+          end_time: new Date().toISOString(), 
+          status: 'completed' 
+        })
+        .eq('id', sessionId)
+        .select('*')
+        .single();
+      
+      if (error) throw error;
+      
+      // Parse the location data from string if necessary
+      const parsedData = {
+        ...data,
+        start_location: parseLocationData(data.start_location),
+        end_location: parseLocationData(data.end_location)
+      };
+      
+      return parsedData;
+    } catch (error) {
+      console.error('Error ending tracking session:', error);
+      throw new Error('Failed to end tracking session');
+    }
+  },
 
-  static async addLocationPoint(
+  // Add a location point to a tracking session
+  async addLocationPoint(
     sessionId: string, 
     userId: string, 
     location: { lat: number; lng: number }, 
     accuracy?: number
   ): Promise<LocationPoint> {
-    const { data, error } = await supabase
-      .from('location_points')
-      .insert({
-        session_id: sessionId,
-        user_id: userId,
-        location,
-        accuracy,
-        timestamp: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    
-    // Convert from database format to our TypeScript interface
-    return this.convertDbPointToLocationPoint(data);
-  }
-
-  static async getTrackingHistory(userId: string): Promise<TrackingSession[]> {
-    const { data, error } = await supabase
-      .from('tracking_sessions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    
-    // Convert from database format to our TypeScript interface
-    return (data || []).map(session => this.convertDbSessionToTrackingSession(session));
-  }
-
-  static async getLocationPoints(sessionId: string): Promise<LocationPoint[]> {
-    const { data, error } = await supabase
-      .from('location_points')
-      .select('*')
-      .eq('session_id', sessionId)
-      .order('timestamp', { ascending: true });
-
-    if (error) throw error;
-    
-    // Convert from database format to our TypeScript interface
-    return (data || []).map(point => this.convertDbPointToLocationPoint(point));
-  }
-  
-  // Helper method to convert database objects to TypeScript interface
-  private static convertDbSessionToTrackingSession(dbSession: any): TrackingSession {
-    // Handle different location formats - it might be a string that needs parsing,
-    // or it might already be parsed as an object
-    let startLocation: { lat: number; lng: number };
-    let endLocation: { lat: number; lng: number } | undefined = undefined;
-    
     try {
-      // Parse start_location based on its current format
-      if (typeof dbSession.start_location === 'string') {
-        // Check if it's a PostgreSQL POINT type
-        if (dbSession.start_location.startsWith('POINT')) {
-          const matches = dbSession.start_location.match(/POINT\(([^ ]+) ([^)]+)\)/);
-          if (matches && matches.length === 3) {
-            startLocation = {
-              lng: parseFloat(matches[1]),
-              lat: parseFloat(matches[2])
-            };
-          } else {
-            // If we can't parse it, default to empty coords
-            startLocation = { lat: 0, lng: 0 };
+      const { data, error } = await supabase
+        .from('location_points')
+        .insert([
+          { 
+            session_id: sessionId, 
+            user_id: userId, 
+            location: JSON.stringify(location), 
+            accuracy 
           }
-        } else {
-          // Otherwise try to parse as JSON
-          startLocation = JSON.parse(dbSession.start_location);
-        }
-      } else {
-        startLocation = dbSession.start_location;
+        ])
+        .select('*')
+        .single();
+      
+      if (error) throw error;
+      
+      // Parse the location data from string if necessary
+      const parsedData = {
+        ...data,
+        location: parseLocationData(data.location)
+      };
+      
+      return parsedData;
+    } catch (error) {
+      console.error('Error adding location point:', error);
+      throw new Error('Failed to add location point');
+    }
+  },
+
+  // Get location points for a tracking session
+  async getLocationPoints(sessionId: string): Promise<LocationPoint[]> {
+    try {
+      const { data, error } = await supabase
+        .from('location_points')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('timestamp', { ascending: true });
+      
+      if (error) throw error;
+      
+      // Parse the location data for each point
+      const parsedData = data.map(point => ({
+        ...point,
+        location: parseLocationData(point.location)
+      }));
+      
+      return parsedData;
+    } catch (error) {
+      console.error('Error getting location points:', error);
+      throw new Error('Failed to get location points');
+    }
+  },
+
+  // Get tracking history for a user
+  async getTrackingHistory(userId: string): Promise<TrackingSession[]> {
+    try {
+      console.log('Getting tracking history for user:', userId);
+      const { data, error } = await supabase
+        .from('tracking_sessions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('start_time', { ascending: false });
+      
+      if (error) {
+        console.error('Error in Supabase query:', error);
+        throw error;
       }
       
-      // Try to parse end_location if it exists
-      if (dbSession.end_location) {
-        if (typeof dbSession.end_location === 'string') {
-          // Check if it's a PostgreSQL POINT type
-          if (dbSession.end_location.startsWith('POINT')) {
-            const matches = dbSession.end_location.match(/POINT\(([^ ]+) ([^)]+)\)/);
-            if (matches && matches.length === 3) {
-              endLocation = {
-                lng: parseFloat(matches[1]),
-                lat: parseFloat(matches[2])
-              };
-            }
-          } else {
-            // Otherwise try to parse as JSON
-            endLocation = JSON.parse(dbSession.end_location);
-          }
-        } else {
-          endLocation = dbSession.end_location;
-        }
-      }
-    } catch (e) {
-      console.error('Error parsing location data:', e);
-      // Fallback to a default location if parsing fails
-      startLocation = { lat: 0, lng: 0 };
+      console.log('Tracking sessions data:', data);
+      
+      // Parse the location data for each session
+      const parsedData = data.map(session => ({
+        ...session,
+        start_location: parseLocationData(session.start_location),
+        end_location: parseLocationData(session.end_location)
+      }));
+      
+      return parsedData;
+    } catch (error) {
+      console.error('Error getting tracking history:', error);
+      throw new Error('Failed to get tracking history');
     }
-    
-    return {
-      id: dbSession.id,
-      user_id: dbSession.user_id,
-      start_location: startLocation,
-      end_location: endLocation,
-      start_time: dbSession.start_time,
-      end_time: dbSession.end_time,
-      status: dbSession.status as 'active' | 'completed',
-      created_at: dbSession.created_at,
-      updated_at: dbSession.updated_at
-    };
-  }
+  },
   
-  // Helper method to convert database objects to TypeScript interface
-  private static convertDbPointToLocationPoint(dbPoint: any): LocationPoint {
-    let locationData: { lat: number; lng: number };
-    
+  // Get nearby safe places
+  async getSafePlaces(
+    location: { lat: number; lng: number }
+  ): Promise<SafePlace[]> {
     try {
-      // Try to parse location based on its format
-      if (typeof dbPoint.location === 'string') {
-        // Check if it's a PostgreSQL POINT type
-        if (dbPoint.location.startsWith('POINT')) {
-          const matches = dbPoint.location.match(/POINT\(([^ ]+) ([^)]+)\)/);
-          if (matches && matches.length === 3) {
-            locationData = {
-              lng: parseFloat(matches[1]),
-              lat: parseFloat(matches[2])
-            };
-          } else {
-            // If we can't parse it, default to empty coords
-            locationData = { lat: 0, lng: 0 };
-          }
-        } else {
-          // Otherwise try to parse as JSON
-          locationData = JSON.parse(dbPoint.location);
-        }
-      } else {
-        locationData = dbPoint.location;
+      // In a real app, we would make an API call to get safe places
+      // For now, we'll return mock data
+      const radius = 0.01; // roughly 1 mile
+      return [
+        { 
+          id: "place1",
+          name: "Hyderabad Police Station", 
+          type: "Police", 
+          distance: 0.8,
+          lat: location.lat + radius * Math.cos(0),
+          lng: location.lng + radius * Math.sin(0)
+        },
+        { 
+          id: "place2",
+          name: "Apollo Hospital", 
+          type: "Hospital", 
+          distance: 1.2,
+          lat: location.lat + radius * Math.cos(Math.PI/2),
+          lng: location.lng + radius * Math.sin(Math.PI/2)
+        },
+        { 
+          id: "place3",
+          name: "Telangana Fire Station", 
+          type: "Fire Station", 
+          distance: 1.5,
+          lat: location.lat + radius * Math.cos(Math.PI),
+          lng: location.lng + radius * Math.sin(Math.PI)
+        },
+        { 
+          id: "place4",
+          name: "MedPlus Pharmacy", 
+          type: "Pharmacy", 
+          distance: 0.3,
+          lat: location.lat + radius * Math.cos(3*Math.PI/2),
+          lng: location.lng + radius * Math.sin(3*Math.PI/2)
+        },
+      ];
+    } catch (error) {
+      console.error('Error getting safe places:', error);
+      throw new Error('Failed to get safe places');
+    }
+  }
+};
+
+// Helper function to parse location data from different formats
+function parseLocationData(locationData: any): { lat: number; lng: number } | undefined {
+  if (!locationData) return undefined;
+  
+  try {
+    // If it's a string, try to parse it as JSON
+    if (typeof locationData === 'string') {
+      const parsed = JSON.parse(locationData);
+      if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+        return { lat: parsed.lat, lng: parsed.lng };
       }
-    } catch (e) {
-      console.error('Error parsing location data:', e);
-      // Fallback to a default location if parsing fails
-      locationData = { lat: 0, lng: 0 };
     }
     
-    return {
-      id: dbPoint.id,
-      session_id: dbPoint.session_id,
-      user_id: dbPoint.user_id,
-      location: locationData,
-      accuracy: dbPoint.accuracy,
-      timestamp: dbPoint.timestamp,
-      created_at: dbPoint.created_at
-    };
+    // If it's already an object with lat/lng
+    if (typeof locationData === 'object') {
+      if (locationData.lat && locationData.lng) {
+        return { 
+          lat: typeof locationData.lat === 'number' ? locationData.lat : parseFloat(locationData.lat), 
+          lng: typeof locationData.lng === 'number' ? locationData.lng : parseFloat(locationData.lng) 
+        };
+      }
+      
+      // Handle PostgreSQL POINT type format (x,y)
+      if (locationData.x && locationData.y) {
+        return { lat: locationData.y, lng: locationData.x };
+      }
+    }
+    
+    console.error('Unknown location data format:', locationData);
+    return undefined;
+  } catch (error) {
+    console.error('Error parsing location data:', error, locationData);
+    return undefined;
   }
 }
