@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -17,19 +17,36 @@ export default function SafeLocationsSetup() {
   const { safeLocations, isLoading, addSafeLocation } = useSafeLocations();
   const { toast } = useToast();
   const { user } = useAuth();
-  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{lat: number; lng: number} | null>(null);
   const [isFirstTimeUser, setIsFirstTimeUser] = useState(true);
+  const [canCloseDialog, setCanCloseDialog] = useState(true);
+  const googleMapLoadedRef = useRef(false);
 
   useEffect(() => {
     if (user && !isLoading) {
       // If user has less than 3 locations and it's their first visit
       if (safeLocations.length < 3 && isFirstTimeUser) {
         setShowDialog(true);
+        if (safeLocations.length < 3) {
+          setCanCloseDialog(false);
+        }
       }
     }
   }, [user, isLoading, safeLocations.length, isFirstTimeUser]);
 
+  // Clean up effect for the map when component unmounts
+  useEffect(() => {
+    return () => {
+      if (mapContainerRef.current && mapRef.current) {
+        // Clean up by setting mapRef to null when unmounting
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  // Handle dialog or sheet open/close
   useEffect(() => {
     if (showDialog || showManualSetup) {
       initializeMap();
@@ -37,6 +54,11 @@ export default function SafeLocationsSetup() {
   }, [showDialog, showManualSetup]);
 
   const initializeMap = async () => {
+    // Don't initialize if map container doesn't exist
+    if (!mapContainerRef.current) {
+      return;
+    }
+
     try {
       await loadGoogleMapsScript();
       
@@ -70,10 +92,14 @@ export default function SafeLocationsSetup() {
   };
 
   const setupMap = (center: {lat: number; lng: number}) => {
-    const mapContainer = document.getElementById('safe-locations-map');
-    if (!mapContainer) return;
+    // Ensure we have both a container and the Google Maps API is loaded
+    if (!mapContainerRef.current || !window.google || !window.google.maps) {
+      console.error('Map container or Google Maps not available');
+      return;
+    }
 
-    const newMap = new window.google.maps.Map(mapContainer, {
+    // Create the map instance
+    const newMap = new window.google.maps.Map(mapContainerRef.current, {
       center,
       zoom: 13,
       mapTypeControl: false,
@@ -81,8 +107,13 @@ export default function SafeLocationsSetup() {
       fullscreenControl: false,
     });
 
+    mapRef.current = newMap;
+    googleMapLoadedRef.current = true;
+
     // Add existing safe locations to map
     safeLocations.forEach(location => {
+      if (!mapRef.current || !window.google || !window.google.maps) return;
+      
       new window.google.maps.Marker({
         position: { lat: location.latitude, lng: location.longitude },
         map: newMap,
@@ -114,8 +145,6 @@ export default function SafeLocationsSetup() {
 
       setSelectedLocation(clickedLocation);
     });
-
-    setMap(newMap);
   };
 
   const handleSaveLocation = async (locationData: {
@@ -129,12 +158,24 @@ export default function SafeLocationsSetup() {
     try {
       await addSafeLocation(locationData);
       setSelectedLocation(null);
+      
       toast({
         title: "Success",
         description: "Safe location added successfully",
       });
+      
+      // Enable closing the dialog once we have at least 3 locations
+      if (!canCloseDialog && safeLocations.length + 1 >= 3) {
+        setCanCloseDialog(true);
+      }
+      
     } catch (error) {
       console.error('Error saving location:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to add safe location",
+      });
     }
   };
 
@@ -152,7 +193,16 @@ export default function SafeLocationsSetup() {
       <Dialog 
         open={showDialog} 
         onOpenChange={(open) => {
-          // If the user is closing and has less than 3 locations, confirm
+          // If the user is closing and has less than 3 locations, show warning
+          if (!open && !canCloseDialog) {
+            toast({
+              variant: "warning",
+              title: "Add Required Locations",
+              description: "Please add at least 3 safe locations for optimal safety monitoring.",
+            });
+            return; // Prevent closing
+          }
+          
           if (!open && safeLocations.length < 3) {
             handleRemindLater();
           } else {
@@ -170,7 +220,11 @@ export default function SafeLocationsSetup() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div id="safe-locations-map" className="w-full h-[400px] rounded-lg overflow-hidden" />
+            <div 
+              id="safe-locations-map" 
+              ref={mapContainerRef}
+              className="w-full h-[400px] rounded-lg overflow-hidden" 
+            />
             
             {selectedLocation && (
               <SafeLocationMarker
@@ -185,6 +239,7 @@ export default function SafeLocationsSetup() {
               <Button 
                 variant="outline" 
                 onClick={handleRemindLater}
+                disabled={!canCloseDialog}
               >
                 Remind Me Later
               </Button>
@@ -222,7 +277,11 @@ export default function SafeLocationsSetup() {
           </SheetHeader>
 
           <div className="mt-4 space-y-6">
-            <div id="safe-locations-map" className="w-full h-[400px] rounded-lg overflow-hidden" />
+            <div 
+              id="safe-locations-map" 
+              ref={mapContainerRef}
+              className="w-full h-[400px] rounded-lg overflow-hidden" 
+            />
             
             {selectedLocation && (
               <SafeLocationMarker
