@@ -9,6 +9,7 @@ import EmergencyButton from '@/components/safety/EmergencyButton';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import SafeLocationsSetup from '@/components/onboarding/SafeLocationsSetup';
 
 interface UserInfo {
   id: string;
@@ -41,14 +42,12 @@ export default function Dashboard() {
     if (!user) return;
     
     try {
-      // Check if user exists in public.users table
       const { data: userData, error: fetchError } = await supabase
         .from('users')
         .select('id')
         .eq('id', user.id)
         .maybeSingle();
       
-      // If user doesn't exist, create a record
       if (fetchError || !userData) {
         console.log('User record not found, creating...');
         
@@ -77,7 +76,6 @@ export default function Dashboard() {
     try {
       console.log('Loading user info for:', user.id);
       
-      // Get alert counts
       const { data: alertsData, error: alertsError } = await supabase
         .from('alerts')
         .select('id, status')
@@ -95,7 +93,6 @@ export default function Dashboard() {
       const activeAlerts = alertsData?.filter(alert => alert.status === 'active').length || 0;
       const totalAlerts = alertsData?.length || 0;
       
-      // Get user profile data
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
@@ -111,7 +108,6 @@ export default function Dashboard() {
         });
       }
       
-      // Update last login
       if (userData) {
         const { error: updateError } = await supabase
           .from('users')
@@ -123,7 +119,6 @@ export default function Dashboard() {
         }
       }
       
-      // Set formatted user info
       setUserInfo({
         id: user.id,
         name: userData?.name || user.user_metadata?.name || 'User',
@@ -207,13 +202,13 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      <SafeLocationsSetup />
       <h1 className="text-2xl font-bold mb-6 flex items-center">
         <Shield className="mr-2 h-6 w-6 text-primary" />
         Welcome to Guardian AI
       </h1>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Profile Section */}
         <Card className="md:col-span-1">
           <CardHeader className="pb-2">
             <CardTitle>Your Profile</CardTitle>
@@ -236,7 +231,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Stats Section */}
         <Card className="md:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle>Safety Overview</CardTitle>
@@ -304,7 +298,6 @@ export default function Dashboard() {
           </CardFooter>
         </Card>
 
-        {/* Safety Tips */}
         <Card className="md:col-span-3">
           <CardHeader className="pb-2">
             <CardTitle>Safety Tips</CardTitle>
