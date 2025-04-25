@@ -107,12 +107,7 @@ export const initMap = async (
         position: { lat: currentLocation.lat, lng: currentLocation.lng },
         map,
         icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          scale: 10,
-          fillColor: "#4285F4",
-          fillOpacity: 1,
-          strokeColor: "#FFFFFF",
-          strokeWeight: 2,
+          url: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
         },
         title: "Your location",
       });

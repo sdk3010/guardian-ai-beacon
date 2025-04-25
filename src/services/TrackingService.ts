@@ -109,6 +109,7 @@ export class TrackingService {
       
       return {
         ...data,
+        status: data.status as 'active' | 'completed' | 'emergency',
         start_location: parseLocation(data.start_location),
         end_location: data.end_location ? parseLocation(data.end_location) : null
       };
@@ -163,7 +164,7 @@ export class TrackingService {
       return (data || []).map(session => ({
         ...session,
         status: session.status as 'active' | 'completed' | 'emergency',
-        start_location: session.start_location ? parseLocation(session.start_location) : null,
+        start_location: session.start_location ? parseLocation(session.start_location) : { lat: 0, lng: 0 },
         end_location: session.end_location ? parseLocation(session.end_location) : null
       }));
     } catch (error) {

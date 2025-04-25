@@ -38,8 +38,9 @@ export default function SafeLocationsSetup() {
         .select('has_seen_location_prompt')
         .eq('user_id', user.id)
         .single();
-
-      if (!error && !userSettings?.has_seen_location_prompt && safeLocations.length < 3) {
+      
+      // Check if query was successful and if the user hasn't seen the prompt
+      if (!error && userSettings && userSettings.has_seen_location_prompt === false && safeLocations.length < 3) {
         setShowDialog(true);
       }
       setHasCheckedPrompt(true);
@@ -69,12 +70,12 @@ export default function SafeLocationsSetup() {
   };
 
   useEffect(() => {
-    if (user && !isLoading) {
+    if (user && !isLoading && !hasCheckedPrompt) {
       if (safeLocations.length < 3) {
         setShowDialog(true);
       }
     }
-  }, [user, isLoading, safeLocations.length]);
+  }, [user, isLoading, safeLocations.length, hasCheckedPrompt]);
 
   useEffect(() => {
     return () => {
@@ -199,26 +200,6 @@ export default function SafeLocationsSetup() {
         title: "Error",
         description: "Failed to add safe location",
       });
-    }
-  };
-
-  const handleRemindLater = async () => {
-    if (!user) return;
-    
-    try {
-      await supabase
-        .from('user_settings')
-        .upsert({
-          user_id: user.id,
-          has_seen_location_prompt: true
-        });
-
-      setShowDialog(false);
-      toast({
-        description: "You can add safe locations later from your dashboard",
-      });
-    } catch (error) {
-      console.error('Error updating user settings:', error);
     }
   };
 
