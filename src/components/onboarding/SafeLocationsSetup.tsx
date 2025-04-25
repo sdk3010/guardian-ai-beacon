@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,9 +36,8 @@ export default function SafeLocationsSetup() {
         .from('user_settings')
         .select('has_seen_location_prompt')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
       
-      // Check if query was successful and if the user hasn't seen the prompt
       if (!error && userSettings && userSettings.has_seen_location_prompt === false && safeLocations.length < 3) {
         setShowDialog(true);
       }
@@ -203,16 +201,9 @@ export default function SafeLocationsSetup() {
     }
   };
 
-  const handleDialogClose = (open: boolean) => {
-    if (!open) {
-      handleRemindLater();
-    }
-    setShowDialog(open);
-  };
-
   return (
     <>
-      <Dialog open={showDialog} onOpenChange={handleDialogClose}>
+      <Dialog open={showDialog} onOpenChange={(open) => !open && handleRemindLater()}>
         <DialogContent className="sm:max-w-[800px]">
           <DialogHeader>
             <DialogTitle>Set Up Safe Locations</DialogTitle>
@@ -259,7 +250,7 @@ export default function SafeLocationsSetup() {
       <Button
         variant="outline"
         size="sm"
-        className="flex items-center gap-2 mb-4"
+        className="flex items-center gap-2"
         onClick={() => setShowManualSetup(true)}
       >
         <MapPin className="h-4 w-4" />
